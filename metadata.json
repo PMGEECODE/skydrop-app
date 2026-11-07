@@ -1,0 +1,6 @@
+{
+  "name": "SkyDrop",
+  "description": "Local peer-to-peer file sharing and media transfer application",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

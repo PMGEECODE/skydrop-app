@@ -82,73 +82,13 @@ fun ReceivedMediaSection(
                         .padding(bottom = 12.dp)
                 ) {
                     Column(modifier = Modifier.padding(14.dp)) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(
-                                    imageVector = Icons.Default.Download,
-                                    contentDescription = null,
-                                    tint = Color(0xFF2E7D32),
-                                    modifier = Modifier.size(20.dp)
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(
-                                    text = "Receiving Drop...",
-                                    style = MaterialTheme.typography.titleSmall,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color(0xFF2E7D32)
-                                )
-                            }
-                            if (prog.percent >= 0) {
-                                Text(
-                                    text = "${prog.percent}%",
-                                    style = MaterialTheme.typography.titleSmall,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color(0xFF2E7D32)
-                                )
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Text(
-                            text = prog.filename,
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = FontWeight.SemiBold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-
-                        Spacer(modifier = Modifier.height(6.dp))
-                        if (prog.percent >= 0) {
-                            LinearProgressIndicator(
-                                progress = { prog.percent / 100f },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(6.dp)
-                                    .clip(RoundedCornerShape(3.dp)),
-                                color = Color(0xFF2E7D32),
-                                trackColor = Color(0xFF2E7D32).copy(alpha = 0.2f)
-                            )
-                        } else {
-                            LinearProgressIndicator(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(6.dp)
-                                    .clip(RoundedCornerShape(3.dp)),
-                                color = Color(0xFF2E7D32)
-                            )
-                        }
-
-                        Spacer(modifier = Modifier.height(6.dp))
-                        val transferredStr = formatBytes(prog.bytesReceived)
-                        val totalStr = if (prog.totalBytes > 0) formatBytes(prog.totalBytes) else "streaming"
-                        Text(
-                            text = "$transferredStr / $totalStr",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        TransferProgressBar(
+                            title = "Receiving Drop...",
+                            filename = prog.filename,
+                            bytesTransferred = prog.bytesReceived,
+                            totalBytes = prog.totalBytes,
+                            percent = prog.percent,
+                            isUpload = false
                         )
                     }
                 }

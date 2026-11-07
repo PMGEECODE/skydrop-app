@@ -59,6 +59,7 @@ fun SendScreen(
 
     var showManualDialog by remember { mutableStateOf(false) }
     var showQrScanner by remember { mutableStateOf(false) }
+    var showMyQrDialog by remember { mutableStateOf(false) }
     var pairingDevice by remember { mutableStateOf<Device?>(null) }
     var isPairing by remember { mutableStateOf(false) }
     var pairError by remember { mutableStateOf<String?>(null) }
@@ -486,6 +487,10 @@ fun SendScreen(
                                     onToggleReceiver = { viewModel.toggleReceiver(it) },
                                     onScanQrClick = { showQrScanner = true },
                                     onManualIpClick = { showManualDialog = true },
+                                 onShowMyQrClick = { showMyQrDialog = true },
+                                 onShowMyQrClick = { showMyQrDialog = true },
+                                 onShowMyQrClick = { showMyQrDialog = true },
+                                 onShowMyQrClick = { showMyQrDialog = true },
                                     onPairClick = { device ->
                                         pairingDevice = device
                                         pairError = null
@@ -562,6 +567,12 @@ fun SendScreen(
                     }
                 }
             }
+        )
+    }
+
+    if (showMyQrDialog) {
+        QrGeneratorDialog(
+            onDismiss = { showMyQrDialog = false }
         )
     }
 

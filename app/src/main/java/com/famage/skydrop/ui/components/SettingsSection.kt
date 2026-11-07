@@ -39,6 +39,7 @@ fun SettingsSection(
     onToggleReceiver: (Boolean) -> Unit,
     onScanQrClick: () -> Unit,
     onManualIpClick: () -> Unit,
+    onShowMyQrClick: () -> Unit,
     onPairClick: (Device) -> Unit,
     onUnpairClick: (String) -> Unit,
     onSendClick: (Device) -> Unit,
@@ -187,22 +188,40 @@ fun SettingsSection(
             item {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     FilledTonalButton(
                         onClick = onScanQrClick,
                         shape = RoundedCornerShape(12.dp),
                         modifier = Modifier
                             .weight(1f)
-                            .height(48.dp)
+                            .height(48.dp),
+                        contentPadding = PaddingValues(horizontal = 4.dp)
                     ) {
                         Icon(
                             imageVector = Icons.Default.QrCodeScanner,
                             contentDescription = null,
-                            modifier = Modifier.size(20.dp)
+                            modifier = Modifier.size(18.dp)
                         )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Scan QR", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Scan QR", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, maxLines = 1)
+                    }
+
+                    FilledTonalButton(
+                        onClick = onShowMyQrClick,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(48.dp),
+                        contentPadding = PaddingValues(horizontal = 4.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.QrCode,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("My QR", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, maxLines = 1)
                     }
 
                     OutlinedButton(
@@ -210,15 +229,16 @@ fun SettingsSection(
                         shape = RoundedCornerShape(12.dp),
                         modifier = Modifier
                             .weight(1f)
-                            .height(48.dp)
+                            .height(48.dp),
+                        contentPadding = PaddingValues(horizontal = 4.dp)
                     ) {
                         Icon(
                             imageVector = Icons.Default.Language,
                             contentDescription = null,
-                            modifier = Modifier.size(20.dp)
+                            modifier = Modifier.size(18.dp)
                         )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Manual IP", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Manual", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, maxLines = 1)
                     }
                 }
             }
@@ -252,26 +272,10 @@ fun SettingsSection(
                         modifier = Modifier.fillMaxWidth(),
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
                     ) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(24.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            CircularProgressIndicator(modifier = Modifier.size(28.dp))
-                            Spacer(modifier = Modifier.height(10.dp))
-                            Text(
-                                text = "Discovering devices on local Wi-Fi...",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(
-                                text = "Ensure both devices are on the same network",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.outline
-                            )
-                        }
+                        PeerSearchRadarAnimation(
+                            modifier = Modifier.padding(16.dp),
+                            message = "Searching for devices on local Wi-Fi..."
+                        )
                     }
                 }
             } else {

@@ -62,6 +62,14 @@ fun SendMediaSection(
         }
     }
 
+    val contentPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri ->
+        if (uri != null) {
+            onAddUris(listOf(uri))
+        }
+    }
+
     // Auto-select paired or connected peer
     val activePeer = peers.firstOrNull { it.isPaired && it.canSend }
         ?: peers.firstOrNull { it.isPaired }
@@ -137,11 +145,11 @@ fun SendMediaSection(
                 }
             }
 
-            // Action Buttons: Pick Photos, Pick Files, Send Text
+            // Action Buttons: Pick Photos, Pick Files, Browse, Send Text
             item {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     Button(
                         onClick = {
@@ -152,14 +160,14 @@ fun SendMediaSection(
                         modifier = Modifier
                             .weight(1f)
                             .defaultMinSize(minHeight = 48.dp),
-                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp)
+                        contentPadding = PaddingValues(horizontal = 2.dp, vertical = 6.dp)
                     ) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Icon(Icons.Default.PhotoLibrary, contentDescription = null, modifier = Modifier.size(20.dp))
+                            Icon(Icons.Default.PhotoLibrary, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(modifier = Modifier.height(2.dp))
                             Text(
                                 text = "Photos",
-                                fontSize = 11.sp,
+                                fontSize = 10.sp,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
@@ -173,14 +181,35 @@ fun SendMediaSection(
                         modifier = Modifier
                             .weight(1f)
                             .defaultMinSize(minHeight = 48.dp),
-                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp)
+                        contentPadding = PaddingValues(horizontal = 2.dp, vertical = 6.dp)
                     ) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Icon(Icons.Default.InsertDriveFile, contentDescription = null, modifier = Modifier.size(20.dp))
+                            Icon(Icons.Default.InsertDriveFile, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(modifier = Modifier.height(2.dp))
                             Text(
                                 text = "Files",
-                                fontSize = 11.sp,
+                                fontSize = 10.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+
+                    Button(
+                        onClick = {
+                            contentPickerLauncher.launch("*/*")
+                        },
+                        modifier = Modifier
+                            .weight(1f)
+                            .defaultMinSize(minHeight = 48.dp),
+                        contentPadding = PaddingValues(horizontal = 2.dp, vertical = 6.dp)
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(Icons.Default.FolderOpen, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = "Browse",
+                                fontSize = 10.sp,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
@@ -192,14 +221,14 @@ fun SendMediaSection(
                         modifier = Modifier
                             .weight(1f)
                             .defaultMinSize(minHeight = 48.dp),
-                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp)
+                        contentPadding = PaddingValues(horizontal = 2.dp, vertical = 6.dp)
                     ) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Icon(Icons.Default.Chat, contentDescription = null, modifier = Modifier.size(20.dp))
+                            Icon(Icons.Default.Chat, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(modifier = Modifier.height(2.dp))
                             Text(
-                                text = "Text / Link",
-                                fontSize = 11.sp,
+                                text = "Text",
+                                fontSize = 10.sp,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )

@@ -28,7 +28,7 @@ class ReceiverTest {
 
     @Test
     fun testReceiverServiceConstants() {
-        assertEquals("skydrop_receiver_channel", ReceiverService.CHANNEL_ID)
+        assertEquals("skydrop_receiver_channel_silent", ReceiverService.CHANNEL_ID)
         assertEquals(1001, ReceiverService.NOTIFICATION_ID)
         assertEquals(8444, ReceiverService.DEFAULT_PORT)
         assertEquals("com.famage.skydrop.action.STOP_RECEIVER", ReceiverService.ACTION_STOP)
