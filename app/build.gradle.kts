@@ -8,7 +8,7 @@ android {
     compileSdk = 37
 
     defaultConfig {
-        applicationId = "com.aistudio.skydrop.abxyzt"
+        applicationId = "com.famage.skydrop"
         minSdk = 24
         targetSdk = 35
         versionCode = 1
@@ -19,7 +19,9 @@ android {
 
     signingConfigs {
         create("debugConfig") {
-            storeFile = file("${rootDir}/debug.keystore")
+            val rootKeystore = file("${rootDir}/debug.keystore")
+            val homeKeystore = file("${System.getProperty("user.home")}/.android/debug.keystore")
+            storeFile = if (rootKeystore.exists()) rootKeystore else homeKeystore
             storePassword = "android"
             keyAlias = "androiddebugkey"
             keyPassword = "android"

@@ -31,6 +31,7 @@ import kotlinx.coroutines.launch
 
 enum class MainNavigationTab {
     MEDIA,
+    CLIPBOARD,
     SETTINGS
 }
 
@@ -225,6 +226,14 @@ fun SendScreen(
                             }
                         )
                         NavigationBarItem(
+                            selected = activeMainTab == MainNavigationTab.CLIPBOARD,
+                            onClick = { activeMainTab = MainNavigationTab.CLIPBOARD },
+                            label = { Text("Clipboard") },
+                            icon = {
+                                Icon(Icons.Default.ContentPaste, contentDescription = "Clipboard")
+                            }
+                        )
+                        NavigationBarItem(
                             selected = activeMainTab == MainNavigationTab.SETTINGS,
                             onClick = { activeMainTab = MainNavigationTab.SETTINGS },
                             label = { Text("Settings & Devices") },
@@ -245,7 +254,7 @@ fun SendScreen(
                 if (isWideScreen) {
                     NavigationRail {
                         NavigationRailItem(
-                            selected = activeMainTab == MainNavigationTab.MEDIA || isDualPane,
+                            selected = activeMainTab == MainNavigationTab.MEDIA,
                             onClick = { activeMainTab = MainNavigationTab.MEDIA },
                             label = { Text("Media Hub") },
                             icon = {
@@ -260,6 +269,14 @@ fun SendScreen(
                                 ) {
                                     Icon(Icons.Default.Folder, contentDescription = "Media Hub")
                                 }
+                            }
+                        )
+                        NavigationRailItem(
+                            selected = activeMainTab == MainNavigationTab.CLIPBOARD,
+                            onClick = { activeMainTab = MainNavigationTab.CLIPBOARD },
+                            label = { Text("Clipboard") },
+                            icon = {
+                                Icon(Icons.Default.ContentPaste, contentDescription = "Clipboard")
                             }
                         )
                         if (!isDualPane) {
@@ -277,7 +294,7 @@ fun SendScreen(
 
                 // Main Content Column / Dual Pane Split View
                 Column(modifier = Modifier.weight(1f).fillMaxHeight()) {
-                    if (isDualPane) {
+                    if (isDualPane && activeMainTab != MainNavigationTab.CLIPBOARD) {
                         // Dual Pane Layout (Tablets / Foldables / Unfolded Duo / Desktops)
                         Row(modifier = Modifier.fillMaxSize()) {
                             // Left Pane: Media Hub
@@ -363,6 +380,7 @@ fun SendScreen(
                                 onToggleReceiver = { viewModel.toggleReceiver(it) },
                                 onScanQrClick = { showQrScanner = true },
                                 onManualIpClick = { showManualDialog = true },
+                                onShowMyQrClick = { showMyQrDialog = true },
                                 onPairClick = { device ->
                                     pairingDevice = device
                                     pairError = null
@@ -478,6 +496,14 @@ fun SendScreen(
                                 }
                             }
 
+                            MainNavigationTab.CLIPBOARD -> {
+                                val clipboardViewModel: com.famage.skydrop.clipboard.ClipboardViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
+                                com.famage.skydrop.clipboard.ClipboardScreen(
+                                    viewModel = clipboardViewModel,
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
+
                             MainNavigationTab.SETTINGS -> {
                                 SettingsSection(
                                     peers = peers,
@@ -487,10 +513,7 @@ fun SendScreen(
                                     onToggleReceiver = { viewModel.toggleReceiver(it) },
                                     onScanQrClick = { showQrScanner = true },
                                     onManualIpClick = { showManualDialog = true },
-                                 onShowMyQrClick = { showMyQrDialog = true },
-                                 onShowMyQrClick = { showMyQrDialog = true },
-                                 onShowMyQrClick = { showMyQrDialog = true },
-                                 onShowMyQrClick = { showMyQrDialog = true },
+                                    onShowMyQrClick = { showMyQrDialog = true },
                                     onPairClick = { device ->
                                         pairingDevice = device
                                         pairError = null

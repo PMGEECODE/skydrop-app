@@ -22,7 +22,9 @@ class EmbeddedReceiverServer(
     private val onTextReceived: (text: String) -> Unit,
     private val onReceiveProgress: ((filename: String, bytesRead: Long, totalBytes: Long, percent: Int) -> Unit)? = null,
     private val onFileReceivedWithDetails: ((filename: String, uri: Uri, size: Long, mimeType: String) -> Unit)? = null,
-    private val onPeerLeft: ((deviceId: String) -> Unit)? = null
+    private val onPeerLeft: ((deviceId: String) -> Unit)? = null,
+    private val clipboardStore: com.famage.skydrop.clipboard.ClipboardStore? = null,
+    private val onClipboardReceived: ((com.famage.skydrop.clipboard.ClipboardItem) -> Unit)? = null
 ) {
 
     companion object {
@@ -134,6 +136,18 @@ class EmbeddedReceiverServer(
                 }
                 method == "POST" && path == "/text" -> {
                     handleText(headers, rawInput, output)
+                }
+                method == "POST" && path == "/clipboard/add" -> {
+                    handleClipboardAdd(headers, rawInput, output)
+                }
+                method == "GET" && path == "/clipboard/sync" -> {
+                    handleClipboardSync(headers, output)
+                }
+                method == "POST" && path == "/clipboard/push" -> {
+                    handleClipboardPush(headers, rawInput, output)
+                }
+                method == "GET" && path == "/clipboard/list" -> {
+                    handleClipboardList(headers, output)
                 }
                 else -> {
                     sendResponse(output, 404, "Not Found", "{\"error\":\"not_found\"}")
@@ -270,6 +284,160 @@ class EmbeddedReceiverServer(
         val body = String(bytes, Charsets.UTF_8)
         onTextReceived(body)
         sendResponse(output, 200, "OK", "{\"status\":\"success\"}")
+    }
+
+    private fun checkAuth(headers: Map<String, String>): Boolean {
+        val auth = headers["authorization"].orEmpty()
+        val token = auth.removePrefix("Bearer ").trim()
+        if (pairedDeviceStore.pairedDevices.value.isNotEmpty()) {
+            return pairedDeviceStore.pairedDevices.value.any { it.authToken == token }
+        }
+        return true
+    }
+
+    private fun handleClipboardAdd(headers: Map<String, String>, input: InputStream, output: OutputStream) {
+        if (!checkAuth(headers)) {
+            sendResponse(output, 401, "Unauthorized", "{\"error\":\"unauthorized\",\"message\":\"Device not paired\"}")
+            return
+        }
+
+        val contentLength = headers["content-length"]?.toIntOrNull() ?: 0
+        if (contentLength <= 0 || contentLength > 64 * 1024) {
+            sendResponse(output, 400, "Bad Request", "{\"error\":\"invalid_payload_length\"}")
+            return
+        }
+
+        val bytes = ByteArray(contentLength)
+        var totalRead = 0
+        while (totalRead < contentLength) {
+            val read = input.read(bytes, totalRead, contentLength - totalRead)
+            if (read == -1) break
+            totalRead += read
+        }
+
+        val body = String(bytes, Charsets.UTF_8)
+        try {
+            val json = org.json.JSONObject(body)
+            val text = json.optString("text", "")
+            if (text.isBlank()) {
+                sendResponse(output, 400, "Bad Request", "{\"error\":\"empty_text\"}")
+                return
+            }
+            val id = json.optString("id", java.util.UUID.randomUUID().toString())
+            val sourceDevice = json.optString("source_device", "Remote Device")
+            val originId = json.optString("origin_id", id)
+            val pinned = json.optBoolean("pinned", false)
+
+            val item = com.famage.skydrop.clipboard.ClipboardItem(
+                id = id,
+                text = text,
+                sourceDevice = sourceDevice,
+                createdAt = System.currentTimeMillis(),
+                pinned = pinned,
+                originId = originId
+            )
+
+            clipboardStore?.add(item)
+            onClipboardReceived?.invoke(item)
+            sendResponse(output, 200, "OK", "{\"status\":\"success\",\"id\":\"$id\"}")
+        } catch (e: Exception) {
+            sendResponse(output, 400, "Bad Request", "{\"error\":\"invalid_json\"}")
+        }
+    }
+
+    private fun handleClipboardSync(headers: Map<String, String>, output: OutputStream) {
+        if (!checkAuth(headers)) {
+            sendResponse(output, 401, "Unauthorized", "{\"error\":\"unauthorized\"}")
+            return
+        }
+
+        val ids = clipboardStore?.getIds() ?: emptyList()
+        val array = org.json.JSONArray()
+        for (id in ids) {
+            array.put(id)
+        }
+        val deviceName = "${Build.MANUFACTURER} ${Build.MODEL}"
+        val json = org.json.JSONObject().apply {
+            put("ids", array)
+            put("device", deviceName)
+        }.toString()
+
+        sendResponse(output, 200, "OK", json)
+    }
+
+    private fun handleClipboardPush(headers: Map<String, String>, input: InputStream, output: OutputStream) {
+        if (!checkAuth(headers)) {
+            sendResponse(output, 401, "Unauthorized", "{\"error\":\"unauthorized\"}")
+            return
+        }
+
+        val contentLength = headers["content-length"]?.toIntOrNull() ?: 0
+        if (contentLength <= 0 || contentLength > 1024 * 1024) {
+            sendResponse(output, 400, "Bad Request", "{\"error\":\"invalid_payload_length\"}")
+            return
+        }
+
+        val bytes = ByteArray(contentLength)
+        var totalRead = 0
+        while (totalRead < contentLength) {
+            val read = input.read(bytes, totalRead, contentLength - totalRead)
+            if (read == -1) break
+            totalRead += read
+        }
+
+        val body = String(bytes, Charsets.UTF_8)
+        try {
+            val json = org.json.JSONObject(body)
+            val array = json.optJSONArray("items") ?: org.json.JSONArray()
+            for (i in 0 until array.length()) {
+                val obj = array.getJSONObject(i)
+                val id = obj.optString("id", java.util.UUID.randomUUID().toString())
+                val text = obj.optString("text", "")
+                if (text.isBlank()) continue
+                val source = obj.optString("source_device", "Remote Device")
+                val originId = obj.optString("origin_id", id)
+                val pinned = obj.optBoolean("pinned", false)
+
+                val item = com.famage.skydrop.clipboard.ClipboardItem(
+                    id = id,
+                    text = text,
+                    sourceDevice = source,
+                    createdAt = System.currentTimeMillis(),
+                    pinned = pinned,
+                    originId = originId
+                )
+                clipboardStore?.add(item)
+            }
+            sendResponse(output, 200, "OK", "{\"status\":\"success\"}")
+        } catch (_: Exception) {
+            sendResponse(output, 400, "Bad Request", "{\"error\":\"invalid_json\"}")
+        }
+    }
+
+    private fun handleClipboardList(headers: Map<String, String>, output: OutputStream) {
+        if (!checkAuth(headers)) {
+            sendResponse(output, 401, "Unauthorized", "{\"error\":\"unauthorized\"}")
+            return
+        }
+
+        val items = clipboardStore?.items?.value ?: emptyList()
+        val array = org.json.JSONArray()
+        for (item in items) {
+            array.put(org.json.JSONObject().apply {
+                put("id", item.id)
+                put("text", item.text)
+                put("source_device", item.sourceDevice)
+                put("created_at", item.createdAt)
+                put("pinned", item.pinned)
+                put("origin_id", item.originId)
+            })
+        }
+        val json = org.json.JSONObject().apply {
+            put("items", array)
+            put("count", items.size)
+        }.toString()
+
+        sendResponse(output, 200, "OK", json)
     }
 
     private fun sendResponse(output: OutputStream, code: Int, status: String, jsonBody: String) {

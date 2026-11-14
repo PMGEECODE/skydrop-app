@@ -181,6 +181,10 @@ class ReceiverService : Service() {
             },
             onPeerLeft = { leavingId ->
                 activePresenceManager?.onFastOfflineHint(leavingId)
+            },
+            clipboardStore = com.famage.skydrop.clipboard.ClipboardStore.getInstance(applicationContext),
+            onClipboardReceived = { item ->
+                Log.d(TAG, "Clipboard item received from ${item.sourceDevice}: ${item.id}")
             }
         )
 
