@@ -22,6 +22,15 @@ class MainActivity : ComponentActivity() {
 
     private val viewModel: SendViewModel by viewModels()
 
+    private val permissionLauncher = registerForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        val nearbyGranted = permissions[android.Manifest.permission.NEARBY_WIFI_DEVICES] ?: true
+        if (nearbyGranted) {
+            viewModel.startDiscovery()
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -34,6 +43,23 @@ class MainActivity : ComponentActivity() {
 
         viewModel.toggleReceiver(true)
         handleIntent(intent)
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val permissionsToRequest = mutableListOf<String>()
+            if (checkSelfPermission(android.Manifest.permission.NEARBY_WIFI_DEVICES) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                permissionsToRequest.add(android.Manifest.permission.NEARBY_WIFI_DEVICES)
+            }
+            if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                permissionsToRequest.add(android.Manifest.permission.POST_NOTIFICATIONS)
+            }
+            if (permissionsToRequest.isNotEmpty()) {
+                permissionLauncher.launch(permissionsToRequest.toTypedArray())
+            } else {
+                viewModel.startDiscovery()
+            }
+        } else {
+            viewModel.startDiscovery()
+        }
 
         setContent {
             SkyDropTheme {

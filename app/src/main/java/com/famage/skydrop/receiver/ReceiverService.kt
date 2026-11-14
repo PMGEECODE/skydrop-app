@@ -223,7 +223,7 @@ class ReceiverService : Service() {
 
         val serviceInfo = NsdServiceInfo().apply {
             serviceName = com.famage.skydrop.identity.DeviceIdentity.getDeviceName()
-            serviceType = "_filedrop._tcp."
+            serviceType = "_filedrop._tcp"
             setPort(port)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
                 setAttribute("version", "1.0.0")
