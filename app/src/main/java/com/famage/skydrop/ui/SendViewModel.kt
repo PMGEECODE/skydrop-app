@@ -18,6 +18,8 @@ import com.famage.skydrop.security.PairingManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import com.famage.skydrop.model.PeerStatus
+import com.famage.skydrop.ui.theme.ThemePreference
+import com.famage.skydrop.ui.theme.ThemePreferenceStore
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
@@ -37,8 +39,19 @@ class SendViewModel(application: Application) : AndroidViewModel(application) {
             ?: com.famage.skydrop.presence.PresenceManager(application, pairedDeviceStore).also { it.start() }
     val queueManager = com.famage.skydrop.network.PersistentQueueManager(application)
 
+    // ── Theme ────────────────────────────────────────────────────────────────
+    private val themeStore = ThemePreferenceStore.getInstance(application)
+    val themePreference: StateFlow<ThemePreference> = themeStore.themePreference
+
+    fun setTheme(pref: ThemePreference) {
+        themeStore.setPreference(pref)
+    }
+    // ────────────────────────────────────────────────────────────────────────
+
     val devices: StateFlow<List<Device>> = discoveryManager.devices
     val pairedDevices: StateFlow<List<PairedDevice>> = pairedDeviceStore.pairedDevices
+    val incomingPairRequests: StateFlow<List<com.famage.skydrop.model.IncomingPairRequest>> =
+        com.famage.skydrop.receiver.ReceiverService.activeIncomingRequests
     val transferHistory: StateFlow<List<com.famage.skydrop.history.TransferHistoryItem>> = historyStore.history
 
     val peerStatuses: StateFlow<List<PeerStatus>> = combine(
@@ -137,12 +150,6 @@ class SendViewModel(application: Application) : AndroidViewModel(application) {
         }
         viewModelScope.launch {
             peerStatuses.collect { statuses ->
-                val hasActiveConnectedPeer = statuses.any { it.isPaired && it.canSend }
-                if (hasActiveConnectedPeer) {
-                    // Pause active mDNS discovery to conserve power when connected to a peer
-                    discoveryManager.stopDiscovery()
-                }
-
                 statuses.filter { it.canSend }.forEach { readyPeer ->
                     val pending = queueManager.getTransfersForDevice(readyPeer.id)
                     for (item in pending) {
@@ -408,6 +415,53 @@ class SendViewModel(application: Application) : AndroidViewModel(application) {
         }?.authToken
     }
 
+    fun initiatePairingRequest(
+        device: Device,
+        onStatus: (String) -> Unit,
+        onReadyForPin: () -> Unit,
+        onError: (String) -> Unit
+    ) {
+        if (com.famage.skydrop.identity.DeviceIdentity.isLocalAddress(device.host)) {
+            onError("Cannot pair a device with itself")
+            return
+        }
+        viewModelScope.launch {
+            val localName = com.famage.skydrop.identity.DeviceIdentity.getDeviceName()
+            val localId = com.famage.skydrop.identity.DeviceIdentity.getDeviceId(getApplication())
+            onStatus("Waiting for approval on ${device.name}...")
+            val res = pairingManager.requestPairing(
+                host = device.host,
+                port = device.port,
+                isTls = device.isTls,
+                localDeviceName = localName,
+                localDeviceId = localId,
+                expectedFingerprint = device.fingerprint,
+                onStatusUpdate = onStatus
+            )
+            if (res.isSuccess) {
+                onReadyForPin()
+            } else {
+                onError(res.exceptionOrNull()?.message ?: "Pairing request failed")
+            }
+        }
+    }
+
+    fun acceptIncomingPairRequest(
+        req: com.famage.skydrop.model.IncomingPairRequest,
+        onAccepted: (com.famage.skydrop.security.PairingManager.LocalPairingSession) -> Unit
+    ) {
+        val server = com.famage.skydrop.receiver.ReceiverService.activeServer
+        val res = server?.acceptPairRequest(req.requestId)
+        if (res != null) {
+            onAccepted(res.second)
+        }
+    }
+
+    fun declineIncomingPairRequest(req: com.famage.skydrop.model.IncomingPairRequest) {
+        val server = com.famage.skydrop.receiver.ReceiverService.activeServer
+        server?.declinePairRequest(req.requestId)
+    }
+
     fun pairWithSecret(device: Device, secret: String, onResult: (Boolean, String?) -> Unit) {
         if (com.famage.skydrop.identity.DeviceIdentity.isLocalAddress(device.host)) {
             onResult(false, "Cannot pair a device with itself")
@@ -420,7 +474,8 @@ class SendViewModel(application: Application) : AndroidViewModel(application) {
                 port = device.port,
                 secret = secret.trim(),
                 expectedFingerprint = device.fingerprint,
-                localDeviceName = localName
+                localDeviceName = localName,
+                isTls = device.isTls
             )
 
             if (result.isSuccess) {
@@ -474,101 +529,160 @@ class SendViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun sendToDevice(device: Device) {
-        if (com.famage.skydrop.identity.DeviceIdentity.isLocalAddress(device.host)) {
+        sendToDevices(listOf(device))
+    }
+
+    fun sendToDevices(devices: List<Device>) {
+        val validDevices = devices.filterNot { com.famage.skydrop.identity.DeviceIdentity.isLocalAddress(it.host) }
+        if (validDevices.isEmpty()) {
             _transferState.value = TransferState.Error("Cannot send files to the same device")
             return
         }
-        val token = getPairedToken(device)
+
         val text = _sharedText.value
-        val items = _queuedItems.value
+        val items = _queuedItems.value.toList()
 
         if (!text.isNullOrBlank()) {
-            sendText(device, text, token)
+            sendTextToDevices(validDevices, text)
             return
         }
 
         if (items.isEmpty()) return
 
-        viewModelScope.launch {
-            _transferState.value = TransferState.Preparing
-            var successCount = 0
+        val exceptionHandler = kotlinx.coroutines.CoroutineExceptionHandler { _, throwable ->
+            android.util.Log.e("SendViewModel", "Uncaught exception in sendToDevices: ${throwable.message}", throwable)
+            _transferState.value = TransferState.Error(throwable.message ?: "Transfer exception occurred")
+        }
 
-            for ((index, item) in items.withIndex()) {
-                val result = fileUploader.uploadFile(device, item, token) { bytesWritten, totalBytes, percent ->
-                    _transferState.value = TransferState.Uploading(
-                        currentFileName = "[${index + 1}/${items.size}] ${item.name}",
-                        bytesTransferred = bytesWritten,
-                        totalBytes = totalBytes,
-                        progressPercent = percent
-                    )
+        viewModelScope.launch(exceptionHandler) {
+            _transferState.value = TransferState.Preparing
+            val totalTargets = validDevices.size
+            val totalFiles = items.size
+            var totalTransfersSuccess = 0
+            val failedTargets = mutableListOf<String>()
+
+            for ((devIndex, device) in validDevices.withIndex()) {
+                val token = getPairedToken(device)
+                val targetPrefix = if (totalTargets > 1) "[Device ${devIndex + 1}/$totalTargets: ${device.name}] " else ""
+                var deviceHadFailure = false
+
+                for ((fileIndex, item) in items.withIndex()) {
+                    val result = fileUploader.uploadFile(device, item, token) { bytesWritten, totalBytes, percent ->
+                        _transferState.value = TransferState.Uploading(
+                            currentFileName = "$targetPrefix[${fileIndex + 1}/$totalFiles] ${item.name}",
+                            bytesTransferred = bytesWritten,
+                            totalBytes = totalBytes,
+                            progressPercent = percent
+                        )
+                    }
+
+                    if (result.isFailure) {
+                        val err = result.exceptionOrNull()?.message ?: "Unknown transfer failure"
+                        deviceHadFailure = true
+                        historyStore.addEntry(
+                            com.famage.skydrop.history.TransferHistoryItem(
+                                direction = "outbound",
+                                itemType = "file",
+                                name = item.name,
+                                size = item.size,
+                                peerName = device.name,
+                                status = "failed",
+                                errorMessage = err
+                            )
+                        )
+                    } else {
+                        totalTransfersSuccess++
+                        historyStore.addEntry(
+                            com.famage.skydrop.history.TransferHistoryItem(
+                                direction = "outbound",
+                                itemType = "file",
+                                name = item.name,
+                                size = item.size,
+                                peerName = device.name,
+                                status = "completed"
+                            )
+                        )
+                    }
                 }
 
-                if (result.isFailure) {
-                    val err = result.exceptionOrNull()?.message ?: "Unknown transfer failure"
+                if (deviceHadFailure) {
+                    failedTargets.add(device.name)
+                }
+            }
+
+            clearQueuedItems()
+
+            if (failedTargets.isEmpty()) {
+                val successMsg = if (totalTargets > 1) {
+                    "Successfully transferred $totalFiles file(s) to all $totalTargets devices!"
+                } else {
+                    "Successfully transferred $totalFiles file(s) to ${validDevices.first().name}"
+                }
+                _transferState.value = TransferState.Success(successMsg)
+            } else if (failedTargets.size == totalTargets) {
+                _transferState.value = TransferState.Error("Failed to transfer files to: ${failedTargets.joinToString()}")
+            } else {
+                _transferState.value = TransferState.Success("Transferred to ${totalTargets - failedTargets.size}/$totalTargets devices (failed on: ${failedTargets.joinToString()})")
+            }
+        }
+    }
+
+    private fun sendTextToDevices(devices: List<Device>, text: String) {
+        val exceptionHandler = kotlinx.coroutines.CoroutineExceptionHandler { _, throwable ->
+            android.util.Log.e("SendViewModel", "Uncaught exception in sendTextToDevices: ${throwable.message}", throwable)
+            _transferState.value = TransferState.Error(throwable.message ?: "Text drop exception occurred")
+        }
+
+        viewModelScope.launch(exceptionHandler) {
+            _transferState.value = TransferState.Preparing
+            var successCount = 0
+            val failedTargets = mutableListOf<String>()
+
+            for (device in devices) {
+                val token = getPairedToken(device)
+                val result = fileUploader.sendText(device, text, token)
+                if (result.isSuccess) {
+                    successCount++
                     historyStore.addEntry(
                         com.famage.skydrop.history.TransferHistoryItem(
                             direction = "outbound",
-                            itemType = "file",
-                            name = item.name,
-                            size = item.size,
+                            itemType = "text",
+                            name = text,
+                            size = text.toByteArray().size.toLong(),
+                            peerName = device.name,
+                            status = "completed"
+                        )
+                    )
+                } else {
+                    failedTargets.add(device.name)
+                    val err = result.exceptionOrNull()?.message ?: "Failed to send text"
+                    historyStore.addEntry(
+                        com.famage.skydrop.history.TransferHistoryItem(
+                            direction = "outbound",
+                            itemType = "text",
+                            name = text,
+                            size = text.toByteArray().size.toLong(),
                             peerName = device.name,
                             status = "failed",
                             errorMessage = err
                         )
                     )
-                    _transferState.value = TransferState.Error("Failed to upload ${item.name}: $err")
-                    return@launch
-                } else {
-                    removeQueuedItem(item)
-                    successCount++
-                    historyStore.addEntry(
-                        com.famage.skydrop.history.TransferHistoryItem(
-                            direction = "outbound",
-                            itemType = "file",
-                            name = item.name,
-                            size = item.size,
-                            peerName = device.name,
-                            status = "completed"
-                        )
-                    )
                 }
             }
 
-            _transferState.value = TransferState.Success("Successfully transferred $successCount file(s) to ${device.name}")
-        }
-    }
+            _sharedText.value = null
 
-    private fun sendText(device: Device, text: String, token: String?) {
-        viewModelScope.launch {
-            _transferState.value = TransferState.Preparing
-            val result = fileUploader.sendText(device, text, token)
-            if (result.isSuccess) {
-                _sharedText.value = null
-                historyStore.addEntry(
-                    com.famage.skydrop.history.TransferHistoryItem(
-                        direction = "outbound",
-                        itemType = "text",
-                        name = text,
-                        size = text.toByteArray().size.toLong(),
-                        peerName = device.name,
-                        status = "completed"
-                    )
-                )
-                _transferState.value = TransferState.Success("Text shared successfully with ${device.name}")
+            if (failedTargets.isEmpty()) {
+                val msg = if (devices.size > 1) {
+                    "Text shared successfully with all ${devices.size} devices!"
+                } else {
+                    "Text shared successfully with ${devices.first().name}"
+                }
+                _transferState.value = TransferState.Success(msg)
+            } else if (failedTargets.size == devices.size) {
+                _transferState.value = TransferState.Error("Failed to send text to: ${failedTargets.joinToString()}")
             } else {
-                val err = result.exceptionOrNull()?.message ?: "Failed to send text"
-                historyStore.addEntry(
-                    com.famage.skydrop.history.TransferHistoryItem(
-                        direction = "outbound",
-                        itemType = "text",
-                        name = text,
-                        size = text.toByteArray().size.toLong(),
-                        peerName = device.name,
-                        status = "failed",
-                        errorMessage = err
-                    )
-                )
-                _transferState.value = TransferState.Error(err)
+                _transferState.value = TransferState.Success("Text shared with $successCount/${devices.size} devices (failed on: ${failedTargets.joinToString()})")
             }
         }
     }

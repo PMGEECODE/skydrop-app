@@ -48,6 +48,7 @@ fun ReceivedMediaCard(
         ),
         modifier = modifier
             .fillMaxWidth()
+            .remoteFocusable(shape = RoundedCornerShape(12.dp), focusedScale = 1.02f)
             .combinedClickable(
                 onClick = {
                     if (isSelectionMode) {

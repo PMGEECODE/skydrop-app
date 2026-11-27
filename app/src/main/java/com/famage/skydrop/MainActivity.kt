@@ -9,11 +9,13 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import com.famage.skydrop.sync.BackgroundSyncWorker
 import com.famage.skydrop.ui.SendScreen
 import com.famage.skydrop.ui.SendViewModel
 import com.famage.skydrop.ui.theme.SkyDropTheme
@@ -35,11 +37,17 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
+        // Initialize Global Uncaught Exception Handler
+        CrashHandler.init(applicationContext)
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             splashScreen.setOnExitAnimationListener { splashScreenView ->
                 splashScreenView.remove()
             }
         }
+
+        // Schedule WorkManager fallback background sync
+        BackgroundSyncWorker.schedule(applicationContext)
 
         viewModel.toggleReceiver(true)
         handleIntent(intent)
@@ -62,7 +70,8 @@ class MainActivity : ComponentActivity() {
         }
 
         setContent {
-            SkyDropTheme {
+            val themePreference by viewModel.themePreference.collectAsState()
+            SkyDropTheme(themePreference = themePreference) {
                 var showSplash by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(true) }
 
                 androidx.compose.runtime.LaunchedEffect(Unit) {
@@ -93,6 +102,12 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        viewModel.startDiscovery()
+        viewModel.syncExistingDownloads()
     }
 
     override fun onNewIntent(intent: Intent) {

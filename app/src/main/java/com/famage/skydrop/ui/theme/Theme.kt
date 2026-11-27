@@ -1,58 +1,110 @@
 package com.famage.skydrop.ui.theme
 
-import android.app.Activity
-import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.dynamicDarkColorScheme
-import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.graphics.Color
 
-private val DarkColorScheme = darkColorScheme(
-    primary = Purple80,
-    secondary = PurpleGrey80,
-    tertiary = Pink80
-)
-
-private val LightColorScheme = lightColorScheme(
-    primary = Purple40,
-    secondary = PurpleGrey40,
-    tertiary = Pink40
-
-    /* Other default colors to override
-    background = Color(0xFFFFFBFE),
-    surface = Color(0xFFFFFBFE),
+// ─── SkyDrop Dark Color Scheme ─────────────────────────────────────────────
+private val SkyDropDarkColorScheme = darkColorScheme(
+    primary = SkyBlue,
     onPrimary = Color.White,
-    onSecondary = Color.White,
+    primaryContainer = SkyBlueDark,
+    onPrimaryContainer = DarkTextMain,
+
+    secondary = TealAccentDark,
+    onSecondary = DarkBgApp,
+    secondaryContainer = TealContainerDark,
+    onSecondaryContainer = Color(0xFFCCFBF1),
+
+    tertiary = SuccessGreen,
     onTertiary = Color.White,
-    onBackground = Color(0xFF1C1B1F),
-    onSurface = Color(0xFF1C1B1F),
-    */
+    tertiaryContainer = Color(0xFF064E3B),
+    onTertiaryContainer = Color(0xFFD1FAE5),
+
+    background = DarkBgApp,
+    onBackground = DarkTextMain,
+
+    surface = DarkBgSurface,
+    onSurface = DarkTextMain,
+    surfaceVariant = DarkBgElevated,
+    onSurfaceVariant = DarkTextSecondary,
+
+    outline = DarkTextMuted,
+    outlineVariant = DarkBorderVariant,
+
+    error = DangerRed,
+    onError = Color.White,
+    errorContainer = ErrorRedContainerDark,
+    onErrorContainer = Color(0xFFFECACA),
+
+    inverseSurface = DarkTextMain,
+    inverseOnSurface = DarkBgApp,
+    inversePrimary = SkyBlueHover,
 )
 
+// ─── SkyDrop Light Color Scheme ────────────────────────────────────────────
+private val SkyDropLightColorScheme = lightColorScheme(
+    primary = SkyBlue,
+    onPrimary = Color.White,
+    primaryContainer = SkyBlueContainerLight,
+    onPrimaryContainer = Color(0xFF0369A1),
+
+    secondary = TealAccent,
+    onSecondary = Color.White,
+    secondaryContainer = TealContainerLight,
+    onSecondaryContainer = Color(0xFF134E4A),
+
+    tertiary = SuccessGreen,
+    onTertiary = Color.White,
+    tertiaryContainer = Color(0xFFD1FAE5),
+    onTertiaryContainer = Color(0xFF064E3B),
+
+    background = LightBgApp,
+    onBackground = LightTextMain,
+
+    surface = LightBgSurface,
+    onSurface = LightTextMain,
+    surfaceVariant = LightBgElevated,
+    onSurfaceVariant = LightTextSecondary,
+
+    outline = LightTextMuted,
+    outlineVariant = LightBorder,
+
+    error = DangerRed,
+    onError = Color.White,
+    errorContainer = ErrorRedContainerLight,
+    onErrorContainer = Color(0xFF7F1D1D),
+
+    inverseSurface = LightTextMain,
+    inverseOnSurface = LightBgSurface,
+    inversePrimary = SkyBlueHover,
+)
+
+/**
+ * SkyDrop application theme.
+ *
+ * @param themePreference Explicit override: [ThemePreference.SYSTEM] follows
+ *   the device setting, [ThemePreference.DARK] / [ThemePreference.LIGHT] force
+ *   that mode regardless of the system setting.
+ * @param content Composable content rendered inside this theme.
+ */
 @Composable
 fun SkyDropTheme(
-    darkTheme: Boolean = isSystemInDarkTheme(),
-    // Dynamic color is available on Android 12+
-    dynamicColor: Boolean = true,
-    content: @Composable () -> Unit
+    themePreference: ThemePreference = ThemePreference.SYSTEM,
+    content: @Composable () -> Unit,
 ) {
-    val colorScheme = when {
-        dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
-            val context = LocalContext.current
-            if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
-        }
-
-        darkTheme -> DarkColorScheme
-        else -> LightColorScheme
+    val darkTheme = when (themePreference) {
+        ThemePreference.DARK   -> true
+        ThemePreference.LIGHT  -> false
+        ThemePreference.SYSTEM -> isSystemInDarkTheme()
     }
 
     MaterialTheme(
-        colorScheme = colorScheme,
+        colorScheme = if (darkTheme) SkyDropDarkColorScheme else SkyDropLightColorScheme,
         typography = Typography,
-        content = content
+        content = content,
     )
 }

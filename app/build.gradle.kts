@@ -11,8 +11,8 @@ android {
         applicationId = "com.famage.skydrop"
         minSdk = 24
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 45
+        versionName = "1.0.45"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -21,7 +21,29 @@ android {
         create("debugConfig") {
             val rootKeystore = file("${rootDir}/debug.keystore")
             val homeKeystore = file("${System.getProperty("user.home")}/.android/debug.keystore")
-            storeFile = if (rootKeystore.exists()) rootKeystore else homeKeystore
+            storeFile = when {
+                rootKeystore.exists() -> rootKeystore
+                homeKeystore.exists() -> homeKeystore
+                else -> {
+                    if (!rootKeystore.exists()) {
+                        rootKeystore.parentFile?.mkdirs()
+                        try {
+                            ProcessBuilder(
+                                "keytool", "-genkeypair", "-v",
+                                "-keystore", rootKeystore.absolutePath,
+                                "-storepass", "android",
+                                "-keypass", "android",
+                                "-alias", "androiddebugkey",
+                                "-keyalg", "RSA",
+                                "-keysize", "2048",
+                                "-validity", "10000",
+                                "-dname", "CN=Android Debug,O=Android,C=US"
+                            ).inheritIO().start().waitFor()
+                        } catch (_: Exception) {}
+                    }
+                    rootKeystore
+                }
+            }
             storePassword = "android"
             keyAlias = "androiddebugkey"
             keyPassword = "android"
@@ -53,6 +75,8 @@ dependencies {
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.compose.material3)
+    implementation(libs.androidx.compose.material3.windowSizeClass)
+    implementation(libs.androidx.window)
     implementation(libs.androidx.compose.material.icons.extended)
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.ui.graphics)
@@ -60,6 +84,7 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
+    implementation("androidx.work:work-runtime-ktx:2.9.1")
     implementation(libs.okhttp)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.androidx.camera.camera2)
@@ -68,6 +93,9 @@ dependencies {
     implementation(libs.mlkit.barcode.scanning)
     implementation("com.google.zxing:core:3.5.3")
     implementation(libs.guava)
+    implementation(libs.media3.exoplayer)
+    implementation(libs.media3.ui)
+    implementation(libs.media3.session)
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation("org.json:json:20240303")

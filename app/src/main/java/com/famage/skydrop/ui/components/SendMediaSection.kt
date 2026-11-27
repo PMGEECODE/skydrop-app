@@ -39,7 +39,7 @@ fun SendMediaSection(
     onRemoveItem: (SharedItem) -> Unit,
     onClearAll: () -> Unit,
     onSetSharedText: (String?) -> Unit,
-    onSendPayload: (peer: PeerStatus) -> Unit,
+    onSendPayload: (peers: List<PeerStatus>) -> Unit,
     onResetTransferState: () -> Unit,
     onNavigateToSettings: () -> Unit,
     modifier: Modifier = Modifier
@@ -70,22 +70,47 @@ fun SendMediaSection(
         }
     }
 
-    // Auto-select paired or connected peer
-    val activePeer = peers.firstOrNull { it.isPaired && it.canSend }
-        ?: peers.firstOrNull { it.isPaired }
-        ?: peers.firstOrNull { it.isConnected }
+    val connectedPeers = remember(peers) {
+        val ready = peers.filter { it.isPaired && (it.canSend || it.isConnected) }
+        if (ready.isNotEmpty()) ready else peers.filter { it.isPaired }
+    }
+
+    var selectedTargetId by remember { mutableStateOf<String?>("ALL") }
+
+    val effectiveSelectedTargetId = remember(selectedTargetId, connectedPeers) {
+        if (selectedTargetId == "ALL" || connectedPeers.none { it.id == selectedTargetId }) {
+            "ALL"
+        } else {
+            selectedTargetId
+        }
+    }
+
+    val isAllSelected = effectiveSelectedTargetId == "ALL"
+
+    val targetsToSend = remember(effectiveSelectedTargetId, connectedPeers) {
+        if (effectiveSelectedTargetId == "ALL") {
+            connectedPeers
+        } else {
+            connectedPeers.filter { it.id == effectiveSelectedTargetId }
+        }
+    }
+
     val totalQueuedSize = remember(queuedItems) { queuedItems.sumOf { it.size } }
 
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .padding(horizontal = 16.dp, vertical = 8.dp)
+    BoxWithConstraints(
+        modifier = modifier.fillMaxSize(),
+        contentAlignment = Alignment.TopCenter
     ) {
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .padding(horizontal = 16.dp, vertical = 8.dp)
-    ) {
+        val isCompact = maxWidth < 380.dp
+        val isUltraCompact = maxWidth < 320.dp
+        val horizontalPadding = if (isUltraCompact) 8.dp else if (isCompact) 12.dp else 16.dp
+
+        Column(
+            modifier = Modifier
+                .fillMaxHeight()
+                .widthIn(max = 840.dp)
+                .padding(horizontal = horizontalPadding, vertical = 8.dp)
+        ) {
         LazyColumn(
             modifier = Modifier.weight(1f),
             verticalArrangement = Arrangement.spacedBy(10.dp)
@@ -95,51 +120,113 @@ fun SendMediaSection(
                 Card(
                     shape = RoundedCornerShape(12.dp),
                     colors = CardDefaults.cardColors(
-                        containerColor = if (activePeer != null) Color(0xFF1B5E20).copy(alpha = 0.12f)
+                        containerColor = if (connectedPeers.isNotEmpty()) Color(0xFF1B5E20).copy(alpha = 0.12f)
                         else MaterialTheme.colorScheme.surfaceVariant
                     ),
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .remoteFocusable(shape = RoundedCornerShape(12.dp), focusedScale = 1.02f)
                 ) {
-                    Row(
-                        modifier = Modifier.padding(12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = if (activePeer != null) "Drop Target: ${activePeer.name}" else "No Device Connected",
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.Bold,
-                                color = if (activePeer != null) Color(0xFF2E7D32) else MaterialTheme.colorScheme.onSurface
-                            )
-                            Spacer(modifier = Modifier.height(2.dp))
-                            Text(
-                                text = if (activePeer != null) "${activePeer.host}:${activePeer.port} • Ready for instant drops"
-                                else "Pair or connect to your PC in Settings",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                val targetTitle = when {
+                                    connectedPeers.isEmpty() -> "No Device Connected"
+                                    isAllSelected && connectedPeers.size > 1 -> "Drop Target: All Devices (${connectedPeers.size})"
+                                    targetsToSend.isNotEmpty() -> "Drop Target: ${targetsToSend.first().name}"
+                                    else -> "No Device Selected"
+                                }
+                                Text(
+                                    text = targetTitle,
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    color = if (connectedPeers.isNotEmpty()) Color(0xFF2E7D32) else MaterialTheme.colorScheme.onSurface
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                val targetSubtitle = when {
+                                    connectedPeers.isEmpty() -> "Pair or connect to your PC/TV in Settings"
+                                    isAllSelected && connectedPeers.size > 1 -> "Broadcasting to all ${connectedPeers.size} active paired devices"
+                                    targetsToSend.isNotEmpty() -> "${targetsToSend.first().host}:${targetsToSend.first().port} • Ready for instant drops"
+                                    else -> "Select a destination below"
+                                }
+                                Text(
+                                    text = targetSubtitle,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+
+                            if (connectedPeers.isEmpty()) {
+                                FilledTonalButton(
+                                    onClick = onNavigateToSettings,
+                                    shape = RoundedCornerShape(10.dp),
+                                    modifier = Modifier.remoteFocusable(shape = RoundedCornerShape(10.dp), focusedScale = 1.05f),
+                                    contentPadding = PaddingValues(horizontal = 12.dp)
+                                ) {
+                                    Text("Pair Device")
+                                }
+                            } else {
+                                SuggestionChip(
+                                    onClick = onNavigateToSettings,
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier.remoteFocusable(shape = RoundedCornerShape(8.dp), focusedScale = 1.05f),
+                                    label = {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(6.dp)
+                                                    .background(Color(0xFF2E7D32), CircleShape)
+                                            )
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text(
+                                                if (connectedPeers.size > 1) "${connectedPeers.size} Online" else "Online",
+                                                fontSize = 12.sp,
+                                                color = Color(0xFF2E7D32)
+                                            )
+                                        }
+                                    }
+                                )
+                            }
                         }
 
-                        if (activePeer == null) {
-                            FilledTonalButton(onClick = onNavigateToSettings, contentPadding = PaddingValues(horizontal = 12.dp)) {
-                                Text("Pair PC")
-                            }
-                        } else {
-                            SuggestionChip(
-                                onClick = onNavigateToSettings,
-                                label = {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(6.dp)
-                                                .background(Color(0xFF2E7D32), CircleShape)
-                                        )
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Text("Online", fontSize = 12.sp, color = Color(0xFF2E7D32))
-                                    }
+                        if (connectedPeers.size > 1) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            LazyRow(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                item {
+                                    FilterChip(
+                                        selected = isAllSelected,
+                                        onClick = { selectedTargetId = "ALL" },
+                                        label = { Text("✨ All (${connectedPeers.size})") },
+                                        modifier = Modifier.remoteFocusable(shape = FilterChipDefaults.shape, focusedScale = 1.05f),
+                                        leadingIcon = if (isAllSelected) {
+                                            { Icon(Icons.Default.Done, contentDescription = null, modifier = Modifier.size(16.dp)) }
+                                        } else null
+                                    )
                                 }
-                            )
+                                items(connectedPeers) { peer ->
+                                    val isSelected = !isAllSelected && effectiveSelectedTargetId == peer.id
+                                    FilterChip(
+                                        selected = isSelected,
+                                        onClick = { selectedTargetId = peer.id },
+                                        label = { Text(peer.name) },
+                                        modifier = Modifier.remoteFocusable(shape = FilterChipDefaults.shape, focusedScale = 1.05f),
+                                        leadingIcon = if (isSelected) {
+                                            { Icon(Icons.Default.Done, contentDescription = null, modifier = Modifier.size(16.dp)) }
+                                        } else null
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -159,7 +246,8 @@ fun SendMediaSection(
                         },
                         modifier = Modifier
                             .weight(1f)
-                            .defaultMinSize(minHeight = 48.dp),
+                            .defaultMinSize(minHeight = 48.dp)
+                            .remoteFocusable(shape = ButtonDefaults.shape, focusedScale = 1.05f),
                         contentPadding = PaddingValues(horizontal = 2.dp, vertical = 6.dp)
                     ) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -180,7 +268,8 @@ fun SendMediaSection(
                         },
                         modifier = Modifier
                             .weight(1f)
-                            .defaultMinSize(minHeight = 48.dp),
+                            .defaultMinSize(minHeight = 48.dp)
+                            .remoteFocusable(shape = ButtonDefaults.shape, focusedScale = 1.05f),
                         contentPadding = PaddingValues(horizontal = 2.dp, vertical = 6.dp)
                     ) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -201,7 +290,8 @@ fun SendMediaSection(
                         },
                         modifier = Modifier
                             .weight(1f)
-                            .defaultMinSize(minHeight = 48.dp),
+                            .defaultMinSize(minHeight = 48.dp)
+                            .remoteFocusable(shape = ButtonDefaults.shape, focusedScale = 1.05f),
                         contentPadding = PaddingValues(horizontal = 2.dp, vertical = 6.dp)
                     ) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -220,7 +310,8 @@ fun SendMediaSection(
                         onClick = { showTextDialog = true },
                         modifier = Modifier
                             .weight(1f)
-                            .defaultMinSize(minHeight = 48.dp),
+                            .defaultMinSize(minHeight = 48.dp)
+                            .remoteFocusable(shape = ButtonDefaults.shape, focusedScale = 1.05f),
                         contentPadding = PaddingValues(horizontal = 2.dp, vertical = 6.dp)
                     ) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -369,16 +460,26 @@ fun SendMediaSection(
         if (queuedItems.isNotEmpty() || !sharedText.isNullOrBlank()) {
             Spacer(modifier = Modifier.height(8.dp))
             val isSending = transferState is TransferState.Preparing || transferState is TransferState.Uploading
+            val canSend = targetsToSend.isNotEmpty() && !isSending
             Button(
-                onClick = { activePeer?.let { onSendPayload(it) } },
-                enabled = activePeer != null && !isSending,
+                onClick = {
+                    if (targetsToSend.isNotEmpty()) {
+                        onSendPayload(targetsToSend)
+                    }
+                },
+                enabled = canSend,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(52.dp),
+                    .height(52.dp)
+                    .remoteFocusable(shape = RoundedCornerShape(12.dp), focusedScale = 1.03f),
                 shape = RoundedCornerShape(12.dp)
             ) {
                 val count = queuedItems.size + (if (sharedText.isNullOrBlank()) 0 else 1)
-                val targetName = activePeer?.name ?: "PC"
+                val targetLabel = when {
+                    isAllSelected && connectedPeers.size > 1 -> "All Devices (${connectedPeers.size})"
+                    targetsToSend.isNotEmpty() -> targetsToSend.first().name
+                    else -> "Device"
+                }
                 if (isSending) {
                     Text("Sending...", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 } else {
@@ -386,7 +487,7 @@ fun SendMediaSection(
                         Icon(Icons.Default.Bolt, contentDescription = null, modifier = Modifier.size(20.dp))
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            text = "Drop $count Item(s) to $targetName",
+                            text = "Drop $count Item(s) to $targetLabel",
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold
                         )
@@ -394,14 +495,14 @@ fun SendMediaSection(
                 }
             }
         }
-    }
-    }
 
-    if (showTextDialog) {
-        SendTextDialog(
-            initialText = sharedText.orEmpty(),
-            onDismiss = { showTextDialog = false },
-            onAttach = { onSetSharedText(it) }
-        )
+        if (showTextDialog) {
+            SendTextDialog(
+                initialText = sharedText.orEmpty(),
+                onDismiss = { showTextDialog = false },
+                onAttach = { onSetSharedText(it) }
+            )
+        }
     }
+}
 }

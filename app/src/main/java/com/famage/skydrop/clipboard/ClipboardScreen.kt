@@ -27,6 +27,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.famage.skydrop.ui.components.remoteFocusable
 
 @Composable
 fun ClipboardScreen(
@@ -72,11 +73,16 @@ fun ClipboardScreen(
         )
     }
 
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .padding(16.dp)
+    Box(
+        modifier = modifier.fillMaxSize(),
+        contentAlignment = Alignment.TopCenter
     ) {
+        Column(
+            modifier = Modifier
+                .fillMaxHeight()
+                .widthIn(max = 840.dp)
+                .padding(16.dp)
+        ) {
         // Top Toolbar
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -118,6 +124,7 @@ fun ClipboardScreen(
                 if (items.isNotEmpty()) {
                     TextButton(
                         onClick = { showClearDialog = true },
+                        modifier = Modifier.remoteFocusable(shape = RoundedCornerShape(8.dp), focusedScale = 1.05f),
                         contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
                     ) {
                         Text("Clear", color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
@@ -158,6 +165,7 @@ fun ClipboardScreen(
                         },
                         enabled = inputText.isNotBlank(),
                         shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.remoteFocusable(shape = RoundedCornerShape(8.dp), focusedScale = 1.05f),
                         contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
                     ) {
                         Text("Add")
@@ -168,7 +176,9 @@ fun ClipboardScreen(
 
                 OutlinedButton(
                     onClick = { viewModel.addFromClipboard(context) },
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .remoteFocusable(shape = RoundedCornerShape(8.dp), focusedScale = 1.03f),
                     shape = RoundedCornerShape(8.dp)
                 ) {
                     Icon(
@@ -279,6 +289,7 @@ fun ClipboardScreen(
         }
     }
 }
+}
 
 @Composable
 fun ClipboardItemCard(
@@ -300,6 +311,7 @@ fun ClipboardItemCard(
     Card(
         modifier = modifier
             .fillMaxWidth()
+            .remoteFocusable(shape = RoundedCornerShape(12.dp), focusedScale = 1.02f)
             .then(
                 if (item.pinned) Modifier.border(1.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(12.dp))
                 else Modifier

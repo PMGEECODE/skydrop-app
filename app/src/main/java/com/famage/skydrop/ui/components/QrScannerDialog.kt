@@ -20,6 +20,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.QrCode
+import androidx.compose.material.icons.filled.VideocamOff
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -27,6 +29,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -55,6 +59,8 @@ private fun Context.findLifecycleOwner(): LifecycleOwner? {
 @Composable
 fun QrScannerDialog(
     onDismiss: () -> Unit,
+    onShowMyQrFallback: (() -> Unit)? = null,
+    onManualFallback: (() -> Unit)? = null,
     onQrScanned: (uri: String) -> Unit
 ) {
     val context = LocalContext.current
@@ -94,6 +100,7 @@ fun QrScannerDialog(
     ) {
         Surface(
             modifier = Modifier
+                .widthIn(max = 480.dp)
                 .fillMaxWidth(0.92f)
                 .fillMaxHeight(0.75f)
                 .clip(RoundedCornerShape(16.dp)),
@@ -131,15 +138,65 @@ fun QrScannerDialog(
                             .fillMaxWidth(),
                         contentAlignment = Alignment.Center
                     ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text(
-                                text = "Camera permission is required to scan QR codes.",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier.padding(horizontal = 16.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.VideocamOff,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(44.dp)
                             )
-                            Spacer(modifier = Modifier.height(16.dp))
-                            Button(onClick = { permissionLauncher.launch(Manifest.permission.CAMERA) }) {
-                                Text("Grant Permission")
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Text(
+                                text = "Camera Permission Required",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                textAlign = TextAlign.Center
+                            )
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                text = "Camera access is needed to scan QR codes. Grant permission, or use one of the alternative pairing options below:",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                textAlign = TextAlign.Center
+                            )
+                            Spacer(modifier = Modifier.height(18.dp))
+                            Button(
+                                onClick = { permissionLauncher.launch(Manifest.permission.CAMERA) },
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .remoteFocusable(shape = RoundedCornerShape(10.dp), focusedScale = 1.03f)
+                            ) {
+                                Text("Grant Camera Permission")
+                            }
+                            if (onShowMyQrFallback != null) {
+                                Spacer(modifier = Modifier.height(8.dp))
+                                OutlinedButton(
+                                    onClick = onShowMyQrFallback,
+                                    shape = RoundedCornerShape(10.dp),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .remoteFocusable(shape = RoundedCornerShape(10.dp), focusedScale = 1.03f)
+                                ) {
+                                    Icon(Icons.Default.QrCode, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("Show My QR Code Instead")
+                                }
+                            }
+                            if (onManualFallback != null) {
+                                Spacer(modifier = Modifier.height(6.dp))
+                                TextButton(
+                                    onClick = onManualFallback,
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .remoteFocusable(shape = RoundedCornerShape(8.dp), focusedScale = 1.03f)
+                                ) {
+                                    Text("Enter PIN / Manual IP Instead")
+                                }
                             }
                         }
                     }
@@ -245,7 +302,10 @@ fun QrScannerDialog(
                 Spacer(modifier = Modifier.height(12.dp))
                 TextButton(
                     onClick = onDismiss,
-                    modifier = Modifier.align(Alignment.End)
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier
+                        .align(Alignment.End)
+                        .remoteFocusable(shape = RoundedCornerShape(8.dp), focusedScale = 1.03f)
                 ) {
                     Text("Cancel")
                 }

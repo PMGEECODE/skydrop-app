@@ -4,7 +4,12 @@ import android.net.Uri
 import android.util.Log
 import com.famage.skydrop.model.PairedDevice
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.withContext
+import okhttp3.ConnectionSpec
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -71,6 +76,45 @@ class PairingManager(private val store: PairedDeviceStore) {
             val digest = md.digest(der)
             return digest.joinToString(":") { "%02X".format(it) }
         }
+
+        @Volatile
+        var activeLocalSession: LocalPairingSession? = null
+
+        fun generateLocalSession(): LocalPairingSession {
+            val random = SecureRandom()
+            val secret = String.format("%06d", random.nextInt(1000000))
+            val expiresAt = System.currentTimeMillis() + 120_000L // 2 minutes
+            val session = LocalPairingSession(secret, expiresAt)
+            activeLocalSession = session
+            return session
+        }
+
+        fun validateLocalSession(secret: String): Boolean {
+            val session = activeLocalSession ?: return false
+            if (System.currentTimeMillis() > session.expiresAtMs) {
+                activeLocalSession = null
+                return false
+            }
+            if (session.failedAttempts >= 5) {
+                activeLocalSession = null
+                return false
+            }
+            val matches = session.secret == secret
+            if (!matches) {
+                session.failedAttempts++
+                if (session.failedAttempts >= 5) {
+                    activeLocalSession = null
+                }
+            }
+            return matches
+        }
+
+        private val _pairSuccessEvents = MutableSharedFlow<PairedDevice>(extraBufferCapacity = 8)
+        val pairSuccessEvents: SharedFlow<PairedDevice> = _pairSuccessEvents.asSharedFlow()
+
+        fun notifyPairSuccess(device: PairedDevice) {
+            _pairSuccessEvents.tryEmit(device)
+        }
     }
 
     suspend fun pairWithDevice(
@@ -78,11 +122,18 @@ class PairingManager(private val store: PairedDeviceStore) {
         port: Int,
         secret: String,
         expectedFingerprint: String?,
-        localDeviceName: String
+        localDeviceName: String,
+        isTls: Boolean = (port == 8443)
     ): Result<PairedDevice> = withContext(Dispatchers.IO) {
         try {
-            val client = createPinningClient(expectedFingerprint)
-            val url = "https://$host:$port/pair/confirm"
+            val scheme = if (isTls) "https" else "http"
+            val url = "$scheme://$host:$port/pair/confirm"
+
+            val client = if (isTls) createPinningClient(expectedFingerprint) else OkHttpClient.Builder()
+                .connectionSpecs(listOf(ConnectionSpec.MODERN_TLS, ConnectionSpec.CLEARTEXT))
+                .connectTimeout(5, TimeUnit.SECONDS)
+                .readTimeout(10, TimeUnit.SECONDS)
+                .build()
 
             val jsonBody = JSONObject().apply {
                 put("device_name", localDeviceName)
@@ -113,7 +164,7 @@ class PairingManager(private val store: PairedDeviceStore) {
                     name = remoteName,
                     host = host,
                     port = port,
-                    isTls = true,
+                    isTls = isTls,
                     fingerprint = remoteFingerprint,
                     authToken = authToken
                 )
@@ -122,7 +173,99 @@ class PairingManager(private val store: PairedDeviceStore) {
                 Result.success(paired)
             }
         } catch (e: Exception) {
+            if (isTls && (e is IOException || e is java.net.SocketTimeoutException)) {
+                Log.w(TAG, "HTTPS pair confirmation to $host:$port failed ($e), falling back to HTTP...")
+                return@withContext pairWithDevice(
+                    host = host,
+                    port = port,
+                    secret = secret,
+                    expectedFingerprint = expectedFingerprint,
+                    localDeviceName = localDeviceName,
+                    isTls = false
+                )
+            }
             Log.e(TAG, "Pairing network error", e)
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Sends a pairing request to the remote peer and waits for user approval.
+     */
+    suspend fun requestPairing(
+        host: String,
+        port: Int,
+        isTls: Boolean,
+        localDeviceName: String,
+        localDeviceId: String,
+        expectedFingerprint: String? = null,
+        onStatusUpdate: ((status: String) -> Unit)? = null
+    ): Result<String> = withContext(Dispatchers.IO) {
+        try {
+            val useTls = isTls || (port == 8443)
+            val activeScheme = if (useTls) "https" else "http"
+            val url = "$activeScheme://$host:$port/pair/request"
+
+            val client = if (useTls) createPinningClient(expectedFingerprint) else OkHttpClient.Builder()
+                .connectionSpecs(listOf(ConnectionSpec.MODERN_TLS, ConnectionSpec.CLEARTEXT))
+                .connectTimeout(5, TimeUnit.SECONDS)
+                .readTimeout(10, TimeUnit.SECONDS)
+                .build()
+
+            val reqId = java.util.UUID.randomUUID().toString()
+            val jsonBody = JSONObject().apply {
+                put("request_id", reqId)
+                put("device_name", localDeviceName)
+                put("device_id", localDeviceId)
+                put("device_type", "android")
+                put("host", "")
+                put("port", 8444)
+                put("is_tls", false)
+            }.toString()
+
+            val request = Request.Builder()
+                .url(url)
+                .header("X-SkyDrop-Device-ID", localDeviceId)
+                .post(jsonBody.toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull()))
+                .build()
+
+            val resp = client.newCall(request).execute()
+
+            resp.use { r ->
+                if (!r.isSuccessful) {
+                    val err = r.body?.string().orEmpty()
+                    return@withContext Result.failure(IOException("Pairing request failed (HTTP ${r.code}): $err"))
+                }
+            }
+
+            onStatusUpdate?.invoke("Waiting for approval...")
+
+            // Poll status up to 45 seconds
+            val statusUrl = "$activeScheme://$host:$port/pair/request/status?request_id=$reqId"
+            val deadline = System.currentTimeMillis() + 45000L
+
+            while (System.currentTimeMillis() < deadline) {
+                delay(1500L)
+                val stReq = Request.Builder().url(statusUrl).build()
+                try {
+                    client.newCall(stReq).execute().use { stResp ->
+                        if (stResp.isSuccessful) {
+                            val stBody = stResp.body?.string().orEmpty()
+                            val stJson = JSONObject(stBody)
+                            val status = stJson.optString("status")
+                            when (status) {
+                                "accepted" -> return@withContext Result.success(reqId)
+                                "declined" -> return@withContext Result.failure(IOException("Pairing request was declined by the receiving device"))
+                                "cancelled", "expired" -> return@withContext Result.failure(IOException("Pairing request was $status"))
+                            }
+                        }
+                    }
+                } catch (_: Exception) {}
+            }
+
+            Result.failure(IOException("Pairing request timed out waiting for approval"))
+        } catch (e: Exception) {
+            Log.e(TAG, "Request pairing error", e)
             Result.failure(e)
         }
     }
@@ -151,8 +294,26 @@ class PairingManager(private val store: PairedDeviceStore) {
         return OkHttpClient.Builder()
             .sslSocketFactory(sslContext.socketFactory, trustManager)
             .hostnameVerifier { _, _ -> true }
+            .connectionSpecs(listOf(ConnectionSpec.MODERN_TLS, ConnectionSpec.CLEARTEXT))
             .connectTimeout(5, TimeUnit.SECONDS)
-            .readTimeout(5, TimeUnit.SECONDS)
+            .readTimeout(10, TimeUnit.SECONDS)
             .build()
     }
+
+    // --- Android as Receiver (Stage 1) ---
+
+    data class LocalPairingSession(
+        val secret: String,
+        val expiresAtMs: Long,
+        var authToken: String? = null,
+        var failedAttempts: Int = 0
+    )
+
+    var activeLocalSession: LocalPairingSession?
+        get() = Companion.activeLocalSession
+        set(value) { Companion.activeLocalSession = value }
+
+    fun generateLocalSession(): LocalPairingSession = Companion.generateLocalSession()
+
+    fun validateLocalSession(secret: String): Boolean = Companion.validateLocalSession(secret)
 }

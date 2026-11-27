@@ -1,5 +1,6 @@
 package com.famage.skydrop.ui.components
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -13,6 +14,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.famage.skydrop.model.SharedItem
 import com.famage.skydrop.model.TransferState
 
@@ -22,34 +24,47 @@ fun ReceiverModeCard(
     onToggle: (Boolean) -> Unit
 ) {
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .remoteFocusable(shape = RoundedCornerShape(16.dp), focusedScale = 1.02f)
+            .clickable { onToggle(!isActive) },
+        shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(
             containerColor = if (isActive) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceVariant
         )
     ) {
-        Row(
+        BoxWithConstraints(
             modifier = Modifier
+                .fillMaxWidth()
                 .padding(14.dp)
-                .fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = "Receive Mode",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold
-                )
-                Text(
-                    text = if (isActive) "Listening on port 8444 • Laptop can send files here" else "Disabled • Toggle to receive files from laptop",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+            val isUltraCompact = maxWidth < 320.dp
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Receive Mode",
+                        style = if (isUltraCompact) MaterialTheme.typography.titleSmall else MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = if (isActive) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurface
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = if (isActive) "Listening on port 8444 • Ready to receive" else "Disabled • Toggle to receive files",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontSize = if (isUltraCompact) 11.sp else 12.sp,
+                        color = if (isActive) MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.85f) else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                Switch(
+                    checked = isActive,
+                    onCheckedChange = onToggle
                 )
             }
-            Switch(
-                checked = isActive,
-                onCheckedChange = onToggle
-            )
         }
     }
 }

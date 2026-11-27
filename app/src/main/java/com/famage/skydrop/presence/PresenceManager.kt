@@ -42,7 +42,10 @@ class PresenceManager(
         private const val TAG = "PresenceManager"
     }
 
-    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private val exceptionHandler = CoroutineExceptionHandler { _, exception ->
+        Log.w(TAG, "Uncaught exception in PresenceManager scope: ${exception.message}", exception)
+    }
+    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob() + exceptionHandler)
     private val powerManager = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
     private val connectivityManager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
 
@@ -70,6 +73,7 @@ class PresenceManager(
         OkHttpClient.Builder()
             .sslSocketFactory(sslContext.socketFactory, trustAllCerts[0] as X509TrustManager)
             .hostnameVerifier { _, _ -> true }
+            .connectionSpecs(listOf(ConnectionSpec.MODERN_TLS, ConnectionSpec.CLEARTEXT))
             .connectionPool(ConnectionPool(10, 90, TimeUnit.SECONDS))
             .connectTimeout(PresenceConstants.DEFAULT_PROBE_TIMEOUT_MS, TimeUnit.MILLISECONDS)
             .readTimeout(PresenceConstants.DEFAULT_PROBE_TIMEOUT_MS, TimeUnit.MILLISECONDS)
@@ -229,17 +233,42 @@ class PresenceManager(
             return@withContext
         }
 
-        val scheme = if (isTls) "https" else "http"
+        var effectiveIsTls = isTls
+        val scheme = if (effectiveIsTls) "https" else "http"
         val url = "$scheme://$host:$port/health"
         val start = System.currentTimeMillis()
+        val localDevId = try { DeviceIdentity.getDeviceId(context) } catch (_: Exception) { "" }
         val request = Request.Builder()
             .url(url)
             .header("Authorization", "Bearer $effectiveAuthToken")
             .header("Accept", "application/json")
+            .apply {
+                if (localDevId.isNotBlank()) {
+                    header("X-SkyDrop-Device-ID", localDevId)
+                }
+            }
             .build()
 
         try {
-            httpClient.newCall(request).execute().use { response ->
+            var activeResponse: Response? = null
+            try {
+                activeResponse = httpClient.newCall(request).execute()
+            } catch (e: Exception) {
+                if (effectiveIsTls) {
+                    val fallbackUrl = "http://$host:$port/health"
+                    val fallbackReq = request.newBuilder().url(fallbackUrl).build()
+                    try {
+                        activeResponse = httpClient.newCall(fallbackReq).execute()
+                        effectiveIsTls = false
+                    } catch (_: Exception) {
+                        throw e
+                    }
+                } else {
+                    throw e
+                }
+            }
+
+            activeResponse.use { response ->
                 val latency = System.currentTimeMillis() - start
                 if (response.code == 401 || response.code == 403) {
                     updatePeerState(

@@ -179,7 +179,7 @@ class NsdDiscoveryManager(private val context: Context) {
                 }
             }
         }
-        mainHandler.postDelayed(resolveTimeoutRunnable!!, RESOLVE_TIMEOUT_MS)
+        resolveTimeoutRunnable?.let { mainHandler.postDelayed(it, RESOLVE_TIMEOUT_MS) }
 
         try {
             nsdManager.resolveService(nextService, resolveListener)
@@ -202,7 +202,7 @@ class NsdDiscoveryManager(private val context: Context) {
         val port = resolved.port
         val name = resolved.serviceName
 
-        var isTls = true
+        var isTls = (port == 8443)
         var fingerprint: String? = null
         val attributes = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             resolved.attributes

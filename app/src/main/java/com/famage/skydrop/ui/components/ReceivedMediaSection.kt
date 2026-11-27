@@ -46,6 +46,9 @@ fun ReceivedMediaSection(
     var isSelectionMode by remember { mutableStateOf(false) }
     val selectedIds = remember { mutableStateListOf<String>() }
 
+    // In-app player state: null = not playing, non-null = playing this item
+    var mediaPlayerItem by remember { mutableStateOf<TransferHistoryItem?>(null) }
+
     val filteredItems = remember(items, selectedFilter) {
         val receivedOnly = items.filter { it.direction == "inbound" && it.status == "completed" }.distinctBy { it.id }
         when (selectedFilter) {
@@ -64,239 +67,322 @@ fun ReceivedMediaSection(
         }
     }
 
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .padding(horizontal = 16.dp, vertical = 8.dp)
+    // Show in-app player when an item is selected for playback
+    mediaPlayerItem?.let { playItem ->
+        InAppMediaPlayer(
+            item = playItem,
+            onDismiss = { mediaPlayerItem = null }
+        )
+    }
+
+    BoxWithConstraints(
+        modifier = modifier.fillMaxSize(),
+        contentAlignment = Alignment.TopCenter
     ) {
-        // Real-Time Inbound Receiving Progress Banner
-        AnimatedVisibility(visible = receiveProgress != null) {
-            receiveProgress?.let { prog ->
-                Card(
-                    colors = CardDefaults.cardColors(
-                        containerColor = Color(0xFF1B5E20).copy(alpha = 0.15f)
-                    ),
+        val screenWidth = maxWidth
+        // Large screens & Android TV: play received video and audio in-app
+        val useInAppPlayer = screenWidth >= 600.dp
+
+        Column(
+            modifier = Modifier
+                .fillMaxHeight()
+                .widthIn(max = 840.dp)
+                .padding(horizontal = 16.dp, vertical = 8.dp)
+        ) {
+            // Real-Time Inbound Receiving Progress Banner
+            AnimatedVisibility(visible = receiveProgress != null) {
+                receiveProgress?.let { prog ->
+                    Card(
+                        shape = RoundedCornerShape(12.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 12.dp)
+                    ) {
+                        Column(modifier = Modifier.padding(14.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Download,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = "Receiving: ${prog.filename}",
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                                if (prog.percent >= 0) {
+                                    Text(
+                                        text = "${prog.percent}%",
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(8.dp))
+                            if (prog.percent >= 0) {
+                                LinearProgressIndicator(
+                                    progress = { prog.percent / 100f },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(6.dp)
+                                        .clip(RoundedCornerShape(3.dp))
+                                )
+                            } else {
+                                LinearProgressIndicator(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(6.dp)
+                                        .clip(RoundedCornerShape(3.dp))
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(6.dp))
+                            val transferredStr = formatBytes(prog.bytesReceived)
+                            val totalStr = if (prog.totalBytes > 0) formatBytes(prog.totalBytes) else "streaming"
+                            Text(
+                                text = "$transferredStr / $totalStr",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Selection Mode Action Bar
+            AnimatedVisibility(visible = isSelectionMode) {
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceVariant,
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(bottom = 12.dp)
+                        .padding(bottom = 8.dp)
                 ) {
-                    Column(modifier = Modifier.padding(14.dp)) {
-                        TransferProgressBar(
-                            title = "Receiving Drop...",
-                            filename = prog.filename,
-                            bytesTransferred = prog.bytesReceived,
-                            totalBytes = prog.totalBytes,
-                            percent = prog.percent,
-                            isUpload = false
-                        )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            IconButton(onClick = { isSelectionMode = false; selectedIds.clear() }) {
+                                Icon(Icons.Default.Close, contentDescription = "Exit Selection")
+                            }
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "${selectedIds.size} selected",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            val allSelected = selectedIds.size == filteredItems.size && filteredItems.isNotEmpty()
+                            TextButton(
+                                onClick = {
+                                    if (allSelected) {
+                                        selectedIds.clear()
+                                    } else {
+                                        selectedIds.clear()
+                                        selectedIds.addAll(filteredItems.map { it.id })
+                                    }
+                                },
+                                modifier = Modifier
+                                    .defaultMinSize(minHeight = 48.dp)
+                                    .remoteFocusable(shape = RoundedCornerShape(8.dp), focusedScale = 1.05f)
+                            ) {
+                                Text(if (allSelected) "Deselect All" else "Select All")
+                            }
+
+                            Spacer(modifier = Modifier.width(4.dp))
+
+                            Button(
+                                onClick = {
+                                    onDeleteMultiple(selectedIds.toList())
+                                    selectedIds.clear()
+                                    isSelectionMode = false
+                                },
+                                enabled = selectedIds.isNotEmpty(),
+                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                                modifier = Modifier
+                                    .defaultMinSize(minHeight = 48.dp)
+                                    .remoteFocusable(
+                                        shape = RoundedCornerShape(8.dp),
+                                        focusBorderColor = MaterialTheme.colorScheme.error,
+                                        focusedScale = 1.05f
+                                    )
+                            ) {
+                                Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Delete")
+                            }
+                        }
                     }
                 }
             }
-        }
 
-        // Multi-selection Action Bar
-        AnimatedVisibility(visible = isSelectionMode) {
-            Card(
-                shape = RoundedCornerShape(12.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
+            // Filter Chips
+            val filters = listOf("All", "Photos & Videos", "Documents", "Audio & Other")
+            LazyRow(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(bottom = 12.dp)
+                    .padding(bottom = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Row(
+                items(filters) { filter ->
+                    FilterChip(
+                        selected = selectedFilter == filter,
+                        onClick = { selectedFilter = filter },
+                        label = { Text(filter, fontSize = 12.sp) },
+                        modifier = Modifier
+                            .defaultMinSize(minHeight = 48.dp)
+                            .remoteFocusable(shape = FilterChipDefaults.shape, focusedScale = 1.05f)
+                    )
+                }
+            }
+
+            if (filteredItems.isEmpty()) {
+                Box(
                     modifier = Modifier
-                        .padding(horizontal = 8.dp, vertical = 6.dp)
-                        .fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
+                        .fillMaxWidth()
+                        .weight(1f),
+                    contentAlignment = Alignment.Center
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        IconButton(
-                            onClick = {
-                                isSelectionMode = false
-                                selectedIds.clear()
-                            },
-                            modifier = Modifier.size(48.dp)
-                        ) {
-                            Icon(Icons.Default.Close, contentDescription = "Cancel Selection")
-                        }
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(
+                            imageVector = Icons.Default.FolderOpen,
+                            contentDescription = null,
+                            modifier = Modifier.size(48.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
                         Text(
-                            text = "${selectedIds.size} selected",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold
+                            text = "No Received Media Yet",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "Files dropped to this device will display here with live thumbnails. Select any media file to preview or open.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 32.dp),
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
                         )
                     }
-
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        val allSelected = filteredItems.isNotEmpty() && selectedIds.size == filteredItems.size
-                        TextButton(
-                            onClick = {
-                                if (allSelected) {
-                                    selectedIds.clear()
-                                } else {
-                                    selectedIds.clear()
-                                    selectedIds.addAll(filteredItems.map { it.id })
-                                }
-                            },
-                            modifier = Modifier.defaultMinSize(minHeight = 48.dp)
-                        ) {
-                            Text(if (allSelected) "Deselect All" else "Select All")
-                        }
-
-                        Spacer(modifier = Modifier.width(4.dp))
-
-                        Button(
-                            onClick = {
-                                val toDelete = selectedIds.toList()
-                                isSelectionMode = false
-                                selectedIds.clear()
-                                onDeleteMultiple(toDelete)
-                            },
-                            enabled = selectedIds.isNotEmpty(),
-                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
-                            modifier = Modifier.defaultMinSize(minHeight = 48.dp)
-                        ) {
-                            Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("Delete")
-                        }
-                    }
                 }
-            }
-        }
-
-        // Filter chips row - horizontally scrollable for small screens (320dp) & all devices
-        LazyRow(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(bottom = 12.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            items(listOf("All", "Photos & Videos", "Documents", "Audio & Other")) { filter ->
-                FilterChip(
-                    selected = selectedFilter == filter,
-                    onClick = { selectedFilter = filter },
-                    label = { Text(filter, fontSize = 12.sp) },
-                    modifier = Modifier.defaultMinSize(minHeight = 48.dp)
-                )
-            }
-        }
-
-        if (filteredItems.isEmpty()) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f),
-                contentAlignment = Alignment.Center
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(
-                        imageVector = Icons.Default.FolderOpen,
-                        contentDescription = null,
-                        modifier = Modifier.size(48.dp),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-                    )
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Text(
-                        text = "No Received Media Yet",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Text(
-                        text = "Files dropped to this phone from your PC will display here with live thumbnails. Press and hold any file to multi-select and delete.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 32.dp),
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                    )
-                }
-            }
-        } else {
-            BoxWithConstraints(modifier = Modifier.weight(1f)) {
-                val useGrid = maxWidth >= 600.dp
-                if (useGrid) {
-                    androidx.compose.foundation.lazy.grid.LazyVerticalGrid(
-                        columns = androidx.compose.foundation.lazy.grid.GridCells.Adaptive(minSize = 320.dp),
-                        modifier = Modifier.fillMaxSize(),
-                        verticalArrangement = Arrangement.spacedBy(10.dp),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        items(filteredItems.size, key = { filteredItems[it].id }) { index ->
-                            val item = filteredItems[index]
-                            val isSelected = selectedIds.contains(item.id)
-                            ReceivedMediaCard(
-                                item = item,
-                                isSelectionMode = isSelectionMode,
-                                isSelected = isSelected,
-                                onToggleSelect = {
-                                    if (isSelected) {
-                                        selectedIds.remove(item.id)
-                                        if (selectedIds.isEmpty()) isSelectionMode = false
-                                    } else {
-                                        selectedIds.add(item.id)
-                                    }
-                                },
-                                onOpen = { openMedia(context, item) },
-                                onShowInFiles = { showInFiles(context, item) },
-                                onShare = { shareMedia(context, item) },
-                                onSendAgain = { onSendAgain(item) },
-                                onDelete = { onDelete(item) },
-                                onLongClick = {
-                                    if (!isSelectionMode) {
-                                        isSelectionMode = true
-                                        selectedIds.add(item.id)
-                                    } else {
+            } else {
+                BoxWithConstraints(modifier = Modifier.weight(1f)) {
+                    val useGrid = maxWidth >= 600.dp
+                    if (useGrid) {
+                        androidx.compose.foundation.lazy.grid.LazyVerticalGrid(
+                            columns = androidx.compose.foundation.lazy.grid.GridCells.Adaptive(minSize = 320.dp),
+                            modifier = Modifier.fillMaxSize(),
+                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            items(filteredItems.size, key = { filteredItems[it].id }) { index ->
+                                val item = filteredItems[index]
+                                val isSelected = selectedIds.contains(item.id)
+                                ReceivedMediaCard(
+                                    item = item,
+                                    isSelectionMode = isSelectionMode,
+                                    isSelected = isSelected,
+                                    onToggleSelect = {
                                         if (isSelected) {
                                             selectedIds.remove(item.id)
                                             if (selectedIds.isEmpty()) isSelectionMode = false
                                         } else {
                                             selectedIds.add(item.id)
                                         }
+                                    },
+                                    onOpen = {
+                                        if (useInAppPlayer && isPlayableMedia(item)) {
+                                            mediaPlayerItem = item
+                                        } else {
+                                            openMedia(context, item)
+                                        }
+                                    },
+                                    onShowInFiles = { showInFiles(context, item) },
+                                    onShare = { shareMedia(context, item) },
+                                    onSendAgain = { onSendAgain(item) },
+                                    onDelete = { onDelete(item) },
+                                    onLongClick = {
+                                        if (!isSelectionMode) {
+                                            isSelectionMode = true
+                                            selectedIds.add(item.id)
+                                        } else {
+                                            if (isSelected) {
+                                                selectedIds.remove(item.id)
+                                                if (selectedIds.isEmpty()) isSelectionMode = false
+                                            } else {
+                                                selectedIds.add(item.id)
+                                            }
+                                        }
                                     }
-                                }
-                            )
+                                )
+                            }
                         }
-                    }
-                } else {
-                    LazyColumn(
-                        modifier = Modifier.fillMaxSize(),
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        items(filteredItems, key = { it.id }) { item ->
-                            val isSelected = selectedIds.contains(item.id)
-                            ReceivedMediaCard(
-                                item = item,
-                                isSelectionMode = isSelectionMode,
-                                isSelected = isSelected,
-                                onToggleSelect = {
-                                    if (isSelected) {
-                                        selectedIds.remove(item.id)
-                                        if (selectedIds.isEmpty()) isSelectionMode = false
-                                    } else {
-                                        selectedIds.add(item.id)
-                                    }
-                                },
-                                onOpen = { openMedia(context, item) },
-                                onShowInFiles = { showInFiles(context, item) },
-                                onShare = { shareMedia(context, item) },
-                                onSendAgain = { onSendAgain(item) },
-                                onDelete = { onDelete(item) },
-                                onLongClick = {
-                                    if (!isSelectionMode) {
-                                        isSelectionMode = true
-                                        selectedIds.add(item.id)
-                                    } else {
+                    } else {
+                        LazyColumn(
+                            modifier = Modifier.fillMaxSize(),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            items(filteredItems, key = { it.id }) { item ->
+                                val isSelected = selectedIds.contains(item.id)
+                                ReceivedMediaCard(
+                                    item = item,
+                                    isSelectionMode = isSelectionMode,
+                                    isSelected = isSelected,
+                                    onToggleSelect = {
                                         if (isSelected) {
                                             selectedIds.remove(item.id)
                                             if (selectedIds.isEmpty()) isSelectionMode = false
                                         } else {
                                             selectedIds.add(item.id)
                                         }
+                                    },
+                                    onOpen = {
+                                        if (useInAppPlayer && isPlayableMedia(item)) {
+                                            mediaPlayerItem = item
+                                        } else {
+                                            openMedia(context, item)
+                                        }
+                                    },
+                                    onShowInFiles = { showInFiles(context, item) },
+                                    onShare = { shareMedia(context, item) },
+                                    onSendAgain = { onSendAgain(item) },
+                                    onDelete = { onDelete(item) },
+                                    onLongClick = {
+                                        if (!isSelectionMode) {
+                                            isSelectionMode = true
+                                            selectedIds.add(item.id)
+                                        } else {
+                                            if (isSelected) {
+                                                selectedIds.remove(item.id)
+                                                if (selectedIds.isEmpty()) isSelectionMode = false
+                                            } else {
+                                                selectedIds.add(item.id)
+                                            }
+                                        }
                                     }
-                                }
-                            )
+                                )
+                            }
                         }
                     }
                 }

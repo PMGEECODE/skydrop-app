@@ -40,7 +40,7 @@ class EmbeddedReceiverServer(
 
     @Synchronized
     fun start(): Int {
-        if (serverSocket != null) return serverSocket!!.localPort
+        if (serverSocket != null) return serverSocket?.localPort ?: port
 
         val socket = ServerSocket(port)
         serverSocket = socket
@@ -75,30 +75,37 @@ class EmbeddedReceiverServer(
     }
 
     private suspend fun handleConnection(client: Socket) = withContext(Dispatchers.IO) {
-        client.use { sock ->
-            sock.soTimeout = 30000 // 30 sec header timeout
-            val rawInput = sock.getInputStream()
-            val output = sock.getOutputStream()
+        try {
+            client.use { sock ->
+                sock.soTimeout = 30000 // 30 sec header timeout
+                val rawInput = sock.getInputStream()
+                val output = sock.getOutputStream()
 
-            // Read HTTP request line and headers manually without consuming the body
-            val headerLines = mutableListOf<String>()
-            val headerBuilder = StringBuilder()
-            var prev = -1
-            var curr: Int
+                // Read HTTP request line and headers manually without consuming the body
+                val headerLines = mutableListOf<String>()
+                val headerBuilder = StringBuilder()
+                var prev = -1
+                var curr: Int
+                var totalHeaderBytes = 0
 
-            while (rawInput.read().also { curr = it } != -1) {
-                headerBuilder.append(curr.toChar())
-                if (prev == '\r'.code && curr == '\n'.code) {
-                    val line = headerBuilder.toString().trim()
-                    headerBuilder.clear()
-                    if (line.isEmpty()) {
-                        // End of headers reached
-                        break
+                while (rawInput.read().also { curr = it } != -1) {
+                    totalHeaderBytes++
+                    if (totalHeaderBytes > 65536) {
+                        Log.w(TAG, "HTTP header limit exceeded (64KB), closing socket")
+                        return@use
                     }
-                    headerLines.add(line)
+                    headerBuilder.append(curr.toChar())
+                    if (prev == '\r'.code && curr == '\n'.code) {
+                        val line = headerBuilder.toString().trim()
+                        headerBuilder.clear()
+                        if (line.isEmpty()) {
+                            // End of headers reached
+                            break
+                        }
+                        headerLines.add(line)
+                    }
+                    prev = curr
                 }
-                prev = curr
-            }
 
             if (headerLines.isEmpty()) return@withContext
 
@@ -128,6 +135,21 @@ class EmbeddedReceiverServer(
                 method == "GET" && path == "/health" -> {
                     handleHealth(headers, output)
                 }
+                method == "POST" && path == "/pair/request" -> {
+                    handlePairRequest(sock, headers, rawInput, output)
+                }
+                method == "GET" && path.startsWith("/pair/request/status") -> {
+                    handlePairRequestStatus(path, output)
+                }
+                method == "POST" && path == "/pair/request/cancel" -> {
+                    handlePairRequestCancel(rawInput, output)
+                }
+                method == "POST" && path == "/pair/start" -> {
+                    handlePairStart(output)
+                }
+                method == "POST" && path == "/pair/confirm" -> {
+                    handlePairConfirm(sock, headers, rawInput, output)
+                }
                 method == "POST" && path == "/presence/leave" -> {
                     handlePresenceLeave(headers, rawInput, output)
                 }
@@ -154,11 +176,153 @@ class EmbeddedReceiverServer(
                 }
             }
         }
+        } catch (e: Exception) {
+            Log.w(TAG, "Connection handling exception: ${e.message}")
+        }
+    }
+
+    private val pendingPairRequests = java.util.concurrent.ConcurrentHashMap<String, com.famage.skydrop.model.IncomingPairRequest>()
+
+    fun getPendingPairRequests(): List<com.famage.skydrop.model.IncomingPairRequest> {
+        val now = System.currentTimeMillis()
+        return pendingPairRequests.values.filter { it.status == "pending" && it.expiresAtMs > now }
+    }
+
+    fun acceptPairRequest(requestId: String): Pair<com.famage.skydrop.model.IncomingPairRequest, com.famage.skydrop.security.PairingManager.LocalPairingSession>? {
+        val req = pendingPairRequests[requestId] ?: return null
+        if (System.currentTimeMillis() > req.expiresAtMs) {
+            req.status = "expired"
+            updateIncomingFlow()
+            return null
+        }
+        req.status = "accepted"
+        val pairingManager = com.famage.skydrop.security.PairingManager(pairedDeviceStore)
+        val session = pairingManager.generateLocalSession()
+        updateIncomingFlow()
+        return Pair(req, session)
+    }
+
+    fun declinePairRequest(requestId: String): com.famage.skydrop.model.IncomingPairRequest? {
+        val req = pendingPairRequests[requestId] ?: return null
+        req.status = "declined"
+        updateIncomingFlow()
+        return req
+    }
+
+    fun cancelPairRequest(requestId: String): com.famage.skydrop.model.IncomingPairRequest? {
+        val req = pendingPairRequests[requestId] ?: return null
+        req.status = "cancelled"
+        updateIncomingFlow()
+        return req
+    }
+
+    private fun updateIncomingFlow() {
+        ReceiverService.activeIncomingRequests.value = getPendingPairRequests()
+    }
+
+    private fun handlePairRequest(sock: Socket, headers: Map<String, String>, input: InputStream, output: OutputStream) {
+        val buf = ByteArray(4096)
+        val readCount = input.read(buf)
+        if (readCount <= 0) {
+            sendResponse(output, 400, "Bad Request", "{\"error\":\"invalid_json\",\"message\":\"Empty request body\"}")
+            return
+        }
+        val bodyStr = String(buf, 0, readCount, Charsets.UTF_8)
+        try {
+            val json = org.json.JSONObject(bodyStr)
+            val remoteName = json.optString("device_name", "Remote Peer")
+            val rawReqId = json.optString("request_id")
+            val reqId = if (rawReqId.isNullOrBlank()) java.util.UUID.randomUUID().toString() else rawReqId
+            val rawDevId = json.optString("device_id")
+            val devId = if (rawDevId.isNullOrBlank()) java.util.UUID.randomUUID().toString() else rawDevId
+            val devType = json.optString("device_type", "desktop")
+            val remoteIp = sock.inetAddress?.hostAddress ?: ""
+            val host = json.optString("host", remoteIp)
+            val port = json.optInt("port", 8443)
+            val isTls = json.optBoolean("is_tls", port == 8443)
+            val fp = json.optString("fingerprint", "")
+
+            val request = com.famage.skydrop.model.IncomingPairRequest(
+                requestId = reqId,
+                deviceId = devId,
+                deviceName = remoteName,
+                deviceType = devType,
+                host = host,
+                port = port,
+                isTls = isTls,
+                fingerprint = fp,
+                expiresAtMs = System.currentTimeMillis() + 90000L,
+                status = "pending"
+            )
+
+            pendingPairRequests[reqId] = request
+            updateIncomingFlow()
+
+            val respJson = org.json.JSONObject().apply {
+                put("status", "pending")
+                put("request_id", reqId)
+                put("expires_at", request.expiresAtMs.toString())
+            }.toString()
+
+            sendResponse(output, 200, "OK", respJson)
+        } catch (e: Exception) {
+            sendResponse(output, 400, "Bad Request", "{\"error\":\"invalid_json\",\"message\":\"Failed to parse request JSON\"}")
+        }
+    }
+
+    private fun handlePairRequestStatus(path: String, output: OutputStream) {
+        val reqId = if (path.contains("request_id=")) {
+            path.substringAfter("request_id=").substringBefore("&")
+        } else ""
+
+        val req = pendingPairRequests[reqId]
+        if (req == null) {
+            sendResponse(output, 404, "Not Found", "{\"error\":\"not_found\",\"message\":\"Request not found\"}")
+            return
+        }
+
+        if (req.status == "pending" && System.currentTimeMillis() > req.expiresAtMs) {
+            req.status = "expired"
+            updateIncomingFlow()
+        }
+
+        val deviceName = com.famage.skydrop.identity.DeviceIdentity.getDeviceName()
+        val json = org.json.JSONObject().apply {
+            put("request_id", req.requestId)
+            put("status", req.status)
+            put("device_name", deviceName)
+        }.toString()
+
+        sendResponse(output, 200, "OK", json)
+    }
+
+    private fun handlePairRequestCancel(input: InputStream, output: OutputStream) {
+        val buf = ByteArray(2048)
+        val readCount = input.read(buf)
+        var reqId = ""
+        if (readCount > 0) {
+            val bodyStr = String(buf, 0, readCount, Charsets.UTF_8)
+            try {
+                val json = org.json.JSONObject(bodyStr)
+                reqId = json.optString("request_id")
+            } catch (_: Exception) {}
+        }
+        val req = cancelPairRequest(reqId)
+        val json = org.json.JSONObject().apply {
+            put("status", req?.status ?: "cancelled")
+            put("request_id", reqId)
+        }.toString()
+        sendResponse(output, 200, "OK", json)
     }
 
     private fun handleHealth(headers: Map<String, String>, output: OutputStream) {
         val auth = headers["authorization"].orEmpty()
         val token = auth.removePrefix("Bearer ").trim()
+
+        val senderId = headers["x-skydrop-device-id"]
+        if (!senderId.isNullOrBlank()) {
+            ReceiverService.activePresenceManager?.recordActivity(senderId)
+        }
 
         if (pairedDeviceStore.pairedDevices.value.isNotEmpty()) {
             val isAuthorized = pairedDeviceStore.pairedDevices.value.any { it.authToken == token }
@@ -181,6 +345,97 @@ class EmbeddedReceiverServer(
             }
         """.trimIndent()
         sendResponse(output, 200, "OK", json)
+    }
+
+    private fun handlePairStart(output: OutputStream) {
+        val pairingManager = com.famage.skydrop.security.PairingManager(pairedDeviceStore)
+        val session = pairingManager.generateLocalSession()
+        
+        val deviceName = com.famage.skydrop.identity.DeviceIdentity.getDeviceName()
+        // Determine local IP if possible, or fallback to an empty host (the client already knows where they connected)
+        val hostIP = "" 
+        
+        // This mirrors the Go daemon's response format exactly
+        val pairingURI = "skydrop://pair?device=${Uri.encode(deviceName)}&host=$hostIP&port=$port&secret=${session.secret}&fingerprint="
+        
+        val json = org.json.JSONObject().apply {
+            put("status", "ready")
+            put("device_name", deviceName)
+            put("host", hostIP)
+            put("fingerprint", "")
+            put("port", port)
+            put("secret", session.secret)
+            put("pairing_uri", pairingURI)
+            // Omitting qrcode base64 for now, Android client can render from URI
+            put("expires_at", session.expiresAtMs.toString()) // Placeholder format
+        }.toString()
+        
+        sendResponse(output, 200, "OK", json)
+    }
+
+    private fun handlePairConfirm(sock: Socket, headers: Map<String, String>, input: InputStream, output: OutputStream) {
+        val contentLength = headers["content-length"]?.toIntOrNull() ?: 4096
+        val toRead = contentLength.coerceAtMost(65536)
+        val buf = ByteArray(toRead)
+        var totalRead = 0
+        while (totalRead < toRead) {
+            val count = input.read(buf, totalRead, toRead - totalRead)
+            if (count == -1) break
+            totalRead += count
+        }
+        if (totalRead <= 0) {
+            sendResponse(output, 400, "Bad Request", "{\"error\":\"invalid_json\",\"message\":\"Empty request body\"}")
+            return
+        }
+        
+        val bodyStr = String(buf, 0, totalRead, Charsets.UTF_8)
+        try {
+            val json = org.json.JSONObject(bodyStr)
+            val secret = json.optString("secret")
+            val remoteDeviceName = json.optString("device_name", "Remote Device")
+            val remoteIp = sock.inetAddress?.hostAddress ?: ""
+            val host = json.optString("host", remoteIp).ifBlank { remoteIp }
+            val isTls = json.optBoolean("is_tls", false)
+            val port = json.optInt("port", if (isTls) 8443 else 8444)
+            val fp = json.optString("fingerprint", "")
+            
+            if (com.famage.skydrop.security.PairingManager.validateLocalSession(secret)) {
+                val newAuthToken = java.util.UUID.randomUUID().toString() + "-" + java.util.UUID.randomUUID().toString()
+                com.famage.skydrop.security.PairingManager.activeLocalSession?.authToken = newAuthToken
+                
+                val remoteDeviceId = json.optString("device_id", java.util.UUID.randomUUID().toString())
+                
+                val pairedDevice = com.famage.skydrop.model.PairedDevice(
+                    id = remoteDeviceId,
+                    name = remoteDeviceName,
+                    host = host,
+                    port = port,
+                    isTls = isTls,
+                    fingerprint = fp,
+                    authToken = newAuthToken
+                )
+                
+                pairedDeviceStore.saveDevice(pairedDevice)
+                ReceiverService.activePresenceManager?.recordActivity(remoteDeviceId)
+                com.famage.skydrop.security.PairingManager.activeLocalSession = null // Consume session
+                com.famage.skydrop.security.PairingManager.notifyPairSuccess(pairedDevice)
+                
+                val deviceName = com.famage.skydrop.identity.DeviceIdentity.getDeviceName()
+                val responseJson = org.json.JSONObject().apply {
+                    put("status", "paired")
+                    put("auth_token", newAuthToken)
+                    put("device_id", deviceId)
+                    put("device_name", deviceName)
+                    put("fingerprint", "")
+                }.toString()
+                
+                sendResponse(output, 200, "OK", responseJson)
+            } else {
+                sendResponse(output, 403, "Forbidden", "{\"error\":\"pairing_failed\",\"message\":\"Invalid or expired secret\"}")
+            }
+        } catch (e: Exception) {
+            sendResponse(output, 400, "Bad Request", "{\"error\":\"invalid_json\",\"message\":\"Failed to parse pair confirmation JSON\"}")
+        }
     }
 
     private fun handlePresenceLeave(headers: Map<String, String>, input: InputStream, output: OutputStream) {
@@ -254,6 +509,10 @@ class EmbeddedReceiverServer(
 
             if (result.isSuccess) {
                 val saveResult = result.getOrThrow()
+                val senderId = headers["x-skydrop-device-id"]
+                if (!senderId.isNullOrBlank()) {
+                    ReceiverService.activePresenceManager?.recordActivity(senderId)
+                }
                 onFileReceived(filename, saveResult.uri)
                 onFileReceivedWithDetails?.invoke(filename, saveResult.uri, saveResult.bytesWritten, saveResult.mimeType)
                 sendResponse(output, 200, "OK", "{\"status\":\"success\",\"saved_uri\":\"${saveResult.uri}\"}")

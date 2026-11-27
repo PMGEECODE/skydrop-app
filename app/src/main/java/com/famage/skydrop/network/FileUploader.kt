@@ -6,6 +6,7 @@ import com.famage.skydrop.model.Device
 import com.famage.skydrop.model.SharedItem
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.ConnectionSpec
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -101,7 +102,15 @@ class FileUploader(private val contentResolver: ContentResolver) {
             val requestBuilder = Request.Builder()
                 .url(url)
                 .addHeader("X-Filename", item.name)
+                .addHeader("X-SkyDrop-Device-Name", com.famage.skydrop.identity.DeviceIdentity.getDeviceName())
                 .post(requestBody)
+
+            val devId = try {
+                android.provider.Settings.Secure.getString(contentResolver, android.provider.Settings.Secure.ANDROID_ID)
+            } catch (_: Exception) { null } ?: ""
+            if (devId.isNotBlank()) {
+                requestBuilder.addHeader("X-SkyDrop-Device-ID", devId)
+            }
 
             if (offset > 0) {
                 requestBuilder.addHeader("Upload-Offset", offset.toString())
@@ -167,7 +176,15 @@ class FileUploader(private val contentResolver: ContentResolver) {
             val requestBody = jsonPayload.toRequestBody(jsonMediaType)
             val requestBuilder = Request.Builder()
                 .url(url)
+                .addHeader("X-SkyDrop-Device-Name", com.famage.skydrop.identity.DeviceIdentity.getDeviceName())
                 .post(requestBody)
+
+            val devId = try {
+                android.provider.Settings.Secure.getString(contentResolver, android.provider.Settings.Secure.ANDROID_ID)
+            } catch (_: Exception) { null } ?: ""
+            if (devId.isNotBlank()) {
+                requestBuilder.addHeader("X-SkyDrop-Device-ID", devId)
+            }
 
             if (!authToken.isNullOrBlank()) {
                 requestBuilder.addHeader("Authorization", "Bearer $authToken")
@@ -205,6 +222,7 @@ class FileUploader(private val contentResolver: ContentResolver) {
         return OkHttpClient.Builder()
             .sslSocketFactory(sslContext.socketFactory, trustAllCerts[0] as X509TrustManager)
             .hostnameVerifier { _, _ -> true }
+            .connectionSpecs(listOf(ConnectionSpec.MODERN_TLS, ConnectionSpec.CLEARTEXT))
             .connectTimeout(15, TimeUnit.SECONDS)
             .writeTimeout(60, TimeUnit.MINUTES) // allow large file transfers
             .readTimeout(60, TimeUnit.MINUTES)
